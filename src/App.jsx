@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { 
   Activity, Factory, LayoutDashboard, Menu, TrendingDown, Users, ClipboardList,
-  ChevronRight, Search, Bell
+  ChevronRight, Search, Bell, Settings, HelpCircle
 } from 'lucide-react';
 
 // 컴포넌트 불러오기 (경로 유지)
@@ -40,93 +40,89 @@ const App = () => {
   const header = getHeaderInfo();
 
   return (
-    <div className="min-h-screen bg-[#F2F4F7] flex font-sans text-gray-800">
-      {/* Sidebar: 증권사 스타일 (Light & Bordered) */}
-      <div className={`${isMenuOpen ? 'w-60' : 'w-16'} bg-white border-r border-gray-300 transition-all duration-300 flex flex-col z-20`}>
+    <div className="min-h-screen bg-slate-50/80 font-sans text-slate-900 flex">
+      {/* Sidebar: 세련된 엔터프라이즈 스타일 */}
+      <div className={`${isMenuOpen ? 'w-72' : 'w-20'} bg-white border-r border-slate-200 transition-all duration-300 flex flex-col z-30 shadow-sm`}>
         {/* Brand Area */}
-        <div className="h-14 flex items-center justify-between px-4 border-b border-gray-200 bg-blue-900">
+        <div className="h-20 flex items-center justify-between px-6 border-b border-slate-100">
           {isMenuOpen && (
-            <div className="flex items-center gap-2 text-white">
-              <div className="w-6 h-6 bg-blue-500 rounded-sm flex items-center justify-center font-bold text-xs">IT</div>
-              <span className="font-bold tracking-tight">CHEM MIS</span>
+            <div className="flex items-center gap-2.5 text-indigo-900">
+              <div className="w-8 h-8 bg-gradient-to-tr from-indigo-600 to-blue-500 rounded-xl flex items-center justify-center shadow-md">
+                <span className="text-white font-bold text-lg leading-none">I</span>
+              </div>
+              <div>
+                <span className="block font-bold text-lg tracking-tight leading-none">ITCHEM</span>
+                <span className="text-[10px] font-medium text-indigo-400 tracking-widest uppercase">Enterprise MIS</span>
+              </div>
             </div>
           )}
-          <button onClick={() => setIsMenuOpen(!isMenuOpen)} className="text-blue-200 hover:text-white">
-            <Menu size={18} />
+          <button onClick={() => setIsMenuOpen(!isMenuOpen)} className="text-slate-400 hover:text-indigo-600 p-1 rounded-lg hover:bg-slate-100 transition">
+            <Menu size={20} />
           </button>
         </div>
         
         {/* Navigation */}
-        <nav className="flex-1 py-4 space-y-0.5 overflow-y-auto">
-          <MenuButton 
-            active={activeTab === 'chapter1'} onClick={() => setActiveTab('chapter1')} 
-            icon={<LayoutDashboard size={18} />} label="고정비 통제" isOpen={isMenuOpen} 
-          />
-          <MenuButton 
-            active={activeTab === 'chapter2'} onClick={() => setActiveTab('chapter2')} 
-            icon={<Factory size={18} />} label="생산·매출 연동" isOpen={isMenuOpen} 
-          />
-          <MenuButton 
-            active={activeTab === 'chapter3'} onClick={() => setActiveTab('chapter3')} 
-            icon={<TrendingDown size={18} />} label="원가절감 관리" isOpen={isMenuOpen} 
-          />
-          <MenuButton 
-            active={activeTab === 'chapter4'} onClick={() => setActiveTab('chapter4')} 
-            icon={<Users size={18} />} label="인력 관리" isOpen={isMenuOpen} 
-          />
-          <div className="my-2 border-t border-gray-200 mx-4"></div>
-          <MenuButton 
-            active={activeTab === 'chapter5'} onClick={() => setActiveTab('chapter5')} 
-            icon={<ClipboardList size={18} />} label="액션 트래커" isOpen={isMenuOpen} 
-          />
+        <nav className="flex-1 py-6 px-3 space-y-1 overflow-y-auto scrollbar-hide">
+          <MenuHeading isOpen={isMenuOpen} text="Financials & Ops" />
+          <MenuButton active={activeTab === 'chapter1'} onClick={() => setActiveTab('chapter1')} icon={<LayoutDashboard size={20} />} label="고정비 통제" isOpen={isMenuOpen} />
+          <MenuButton active={activeTab === 'chapter2'} onClick={() => setActiveTab('chapter2')} icon={<Factory size={20} />} label="생산·매출 연동" isOpen={isMenuOpen} />
+          <MenuButton active={activeTab === 'chapter3'} onClick={() => setActiveTab('chapter3')} icon={<TrendingDown size={20} />} label="원가절감 관리" isOpen={isMenuOpen} />
+          
+          <div className="my-4"></div>
+          <MenuHeading isOpen={isMenuOpen} text="Organization" />
+          <MenuButton active={activeTab === 'chapter4'} onClick={() => setActiveTab('chapter4')} icon={<Users size={20} />} label="인력 관리" isOpen={isMenuOpen} />
+          <MenuButton active={activeTab === 'chapter5'} onClick={() => setActiveTab('chapter5')} icon={<ClipboardList size={20} />} label="액션 트래커" isOpen={isMenuOpen} />
         </nav>
 
         {/* User Profile (Bottom) */}
-        <div className="p-4 border-t border-gray-200 bg-gray-50">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded border border-gray-300 bg-white flex items-center justify-center font-bold text-xs text-blue-900">UA</div>
+        <div className="p-4 border-t border-slate-100 mx-2 mb-2">
+          <div className={`flex items-center gap-3 p-2 rounded-xl transition-colors ${isMenuOpen ? 'bg-slate-50 hover:bg-indigo-50 cursor-pointer' : 'justify-center'}`}>
+            <img src="https://api.dicebear.com/7.x/avataaars/svg?seed=Felix" alt="User" className="w-10 h-10 rounded-full bg-white border-2 border-white shadow-sm" />
             {isMenuOpen && (
-              <div className="overflow-hidden">
-                <p className="text-xs font-bold text-gray-900 truncate">OLED 사업부장</p>
-                <p className="text-[10px] text-gray-500 truncate">관리자 모드</p>
+              <div className="overflow-hidden flex-1">
+                <p className="text-sm font-bold text-slate-900 truncate">김관리 수석</p>
+                <p className="text-xs text-slate-500 truncate">OLED 전략기획팀</p>
               </div>
             )}
+            {isMenuOpen && <Settings size={16} className="text-slate-400" />}
           </div>
         </div>
       </div>
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col h-screen overflow-hidden">
-        {/* Top Header: 금융 대시보드 느낌 */}
-        <header className="h-14 bg-white border-b border-gray-300 flex items-center justify-between px-6 shadow-sm z-10">
-          <div className="flex items-center gap-4">
-            <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-              <span className="text-gray-400 font-light">menu</span>
-              <ChevronRight size={14} className="text-gray-400"/>
+      <div className="flex-1 flex flex-col h-screen overflow-hidden relative">
+        {/* Top Header: 깔끔하고 넓은 느낌 */}
+        <header className="h-20 bg-white/80 backdrop-blur-md border-b border-slate-200/60 flex items-center justify-between px-8 z-20 sticky top-0">
+          <div>
+            <h2 className="text-2xl font-bold text-slate-900 flex items-center gap-2 tracking-tight">
               {header.title}
             </h2>
-            <span className="px-2 py-0.5 rounded-sm bg-blue-50 text-blue-700 text-xs font-bold border border-blue-100">
+            <p className="text-sm font-medium text-slate-500 mt-0.5">
               {header.sub}
-            </span>
+            </p>
           </div>
-          <div className="flex items-center gap-4">
-             {/* 검색창 흉내 */}
-             <div className="hidden md:flex items-center bg-gray-100 rounded-sm px-3 py-1.5 border border-gray-200">
-                <Search size={14} className="text-gray-400 mr-2"/>
-                <input type="text" placeholder="코드/항목 검색" className="bg-transparent border-none text-xs w-48 focus:outline-none"/>
+          <div className="flex items-center gap-6">
+             {/* 검색창 */}
+             <div className="hidden lg:flex items-center bg-slate-100/50 rounded-xl px-4 py-2.5 border border-slate-200 focus-within:border-indigo-400 focus-within:bg-white transition-all w-72">
+                <Search size={18} className="text-slate-400 mr-3"/>
+                <input type="text" placeholder="Search anything..." className="bg-transparent border-none text-sm w-full focus:outline-none text-slate-700 placeholder-slate-400"/>
              </div>
-             <div className="w-px h-4 bg-gray-300"></div>
-             <div className="flex items-center gap-1 text-xs text-gray-500 font-mono">
-                <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
-                LIVE DATA
+             
+             <div className="flex items-center gap-4 text-slate-400">
+                <button className="p-2 rounded-full hover:bg-slate-100 hover:text-indigo-600 transition relative">
+                  <Bell size={20} />
+                  <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full border border-white"></span>
+                </button>
+                <button className="p-2 rounded-full hover:bg-slate-100 hover:text-indigo-600 transition">
+                  <HelpCircle size={20} />
+                </button>
              </div>
-             <Bell size={18} className="text-gray-400 hover:text-blue-600 cursor-pointer"/>
           </div>
         </header>
 
         {/* Contents Wrapper */}
-        <main className="flex-1 overflow-y-auto p-4 md:p-6 scrollbar-hide">
-          <div className="max-w-7xl mx-auto space-y-6">
+        <main className="flex-1 overflow-y-auto p-8 scrollbar-hide relative z-10">
+          <div className="max-w-[1600px] mx-auto space-y-8">
             {renderContent()}
           </div>
         </main>
@@ -135,17 +131,26 @@ const App = () => {
   );
 };
 
-// 메뉴 버튼 (스타일 개선)
+// 메뉴 섹션 헤더
+const MenuHeading = ({ isOpen, text }) => (
+  <div className={`px-4 pb-2 pt-4 ${!isOpen && 'hidden'}`}>
+    <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">{text}</p>
+  </div>
+);
+
+// 메뉴 버튼 (세련된 스타일)
 const MenuButton = ({ active, onClick, icon, label, isOpen }) => (
   <button 
     onClick={onClick}
-    className={`w-full flex items-center gap-3 px-4 py-2.5 text-sm transition-all duration-150 border-l-4
+    className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl text-[15px] transition-all duration-200 group relative
       ${active 
-        ? 'border-blue-600 bg-blue-50 text-blue-800 font-bold' 
-        : 'border-transparent text-gray-600 hover:bg-gray-100 hover:text-gray-900 font-medium'}`}
+        ? 'bg-indigo-600 text-white font-semibold shadow-md shadow-indigo-200/50' 
+        : 'text-slate-600 hover:bg-indigo-50/80 hover:text-indigo-700 font-medium'}`}
   >
     {icon}
-    {isOpen && <span className="whitespace-nowrap">{label}</span>}
+    {isOpen && <span className="whitespace-nowrap flex-1 text-left">{label}</span>}
+    {active && isOpen && <ChevronRight size={16} className="text-indigo-200 animate-pulse"/>}
+    {!isOpen && active && <div className="absolute left-1 top-1/2 -translate-y-1/2 w-1.5 h-8 bg-white rounded-full opacity-30"></div>}
   </button>
 );
 
