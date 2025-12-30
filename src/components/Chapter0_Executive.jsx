@@ -1,11 +1,11 @@
 import React, { useState, useMemo } from 'react';
 import { 
   TrendingUp, TrendingDown, AlertCircle, CheckCircle, Calculator, 
-  ArrowUpDown, Calendar, ChevronRight, PieChart as PieIcon, BarChart3, ArrowLeft, Save
+  ArrowUpDown, Calendar, ChevronRight, PieChart as PieIcon, BarChart3, ArrowLeft, Save, Loader2
 } from 'lucide-react';
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from 'recharts';
 
-// KPI Card Component
+// KPI Card Component (UI 유지)
 const DashboardCard = ({ title, value, sub, trendValue, isPositiveGood = true, colorClass, barColor }) => {
   const isUp = trendValue > 0;
   const isGood = isPositiveGood ? isUp : !isUp;
@@ -37,7 +37,8 @@ const DashboardCard = ({ title, value, sub, trendValue, isPositiveGood = true, c
 const Chapter0_Executive = ({ pnlData, onPnlChange, historyData, onSaveArchive }) => {
   const [sortConfig, setSortConfig] = useState({ key: 'rev', direction: 'desc' });
   const [selectedMonth, setSelectedMonth] = useState(null);
-  const [saveMonthName, setSaveMonthName] = useState('2025-01');
+  const [saveMonthName, setSaveMonthName] = useState(() => new Date().toISOString().slice(0, 7)); // 기본값: 현재 월
+  const [isSaving, setIsSaving] = useState(false); // 저장 로딩 상태 추가
 
   // 정렬 핸들러
   const handleSort = (key) => {
@@ -48,14 +49,29 @@ const Chapter0_Executive = ({ pnlData, onPnlChange, historyData, onSaveArchive }
     setSortConfig({ key, direction });
   };
 
+  // 저장 버튼 핸들러 (로딩 상태 관리)
+  const handleSaveClick = async () => {
+    if (!saveMonthName) return;
+    setIsSaving(true);
+    try {
+      // 부모 컴포넌트의 Supabase 저장 로직 호출 (async)
+      await onSaveArchive(saveMonthName);
+    } catch (error) {
+      console.error("Save failed", error);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   // 실시간 계산 + 정렬 로직 (메인 화면용)
   const calculatedData = useMemo(() => {
-    const safeData = pnlData || [];
+    // pnlData가 없거나 로딩 중일 때 안전장치
+    const safeData = Array.isArray(pnlData) ? pnlData : [];
 
     let processedRows = safeData.map(row => {
       // 영업이익(OP) = GM - 고정비 (자동 계산)
-      const op = row.gm - row.fixed;
-      const prevOp = row.prevGm - row.prevFixed;
+      const op = (row.gm || 0) - (row.fixed || 0);
+      const prevOp = (row.prevGm || 0) - (row.prevFixed || 0);
       const opVar = op - prevOp;
       return { ...row, op, prevOp, opVar };
     });
@@ -69,15 +85,15 @@ const Chapter0_Executive = ({ pnlData, onPnlChange, historyData, onSaveArchive }
 
     // 합계 계산
     const sums = processedRows.reduce((acc, cur) => ({
-      rev: acc.rev + cur.rev, prevRev: acc.prevRev + cur.prevRev,
-      gm: acc.gm + cur.gm, prevGm: acc.prevGm + cur.prevGm,
-      fixed: acc.fixed + cur.fixed, prevFixed: acc.prevFixed + cur.prevFixed,
+      rev: acc.rev + (cur.rev || 0), prevRev: acc.prevRev + (cur.prevRev || 0),
+      gm: acc.gm + (cur.gm || 0), prevGm: acc.prevGm + (cur.prevGm || 0),
+      fixed: acc.fixed + (cur.fixed || 0), prevFixed: acc.prevFixed + (cur.prevFixed || 0),
     }), { rev: 0, prevRev: 0, gm: 0, prevGm: 0, fixed: 0, prevFixed: 0 });
 
     const totalOp = sums.gm - sums.fixed;
     const totalPrevOp = sums.prevGm - sums.prevFixed;
     
-    // 트렌드 계산
+    // 트렌드 계산 (0으로 나누기 방지)
     const revTrend = sums.prevRev > 0 ? ((sums.rev - sums.prevRev) / sums.prevRev) * 100 : 0;
     const gmTrend = sums.prevGm > 0 ? ((sums.gm - sums.prevGm) / sums.prevGm) * 100 : 0;
     const fixedTrend = sums.prevFixed > 0 ? ((sums.fixed - sums.prevFixed) / sums.prevFixed) * 100 : 0;
@@ -95,15 +111,16 @@ const Chapter0_Executive = ({ pnlData, onPnlChange, historyData, onSaveArchive }
 
   // 상세 페이지용 합계 계산
   const calculateHistoryTotal = (buData) => {
+    if (!buData) return { rev: 0, gm: 0, fixed: 0, op: 0 };
     const sums = buData.reduce((acc, cur) => ({
-      rev: acc.rev + cur.rev,
-      gm: acc.gm + cur.gm,
-      fixed: acc.fixed + cur.fixed,
+      rev: acc.rev + (cur.rev || 0),
+      gm: acc.gm + (cur.gm || 0),
+      fixed: acc.fixed + (cur.fixed || 0),
     }), { rev: 0, gm: 0, fixed: 0 });
     return { ...sums, op: sums.gm - sums.fixed };
   };
 
-  // --- [View: Drill-down] ---
+  // --- [View: Drill-down (Archive Detail)] ---
   if (selectedMonth) {
     const historyTotal = calculateHistoryTotal(selectedMonth.bu_data);
     return (
@@ -149,7 +166,7 @@ const Chapter0_Executive = ({ pnlData, onPnlChange, historyData, onSaveArchive }
                  </tr>
                </thead>
                <tbody className="divide-y divide-slate-100">
-                 {selectedMonth.bu_data.map((item, idx) => {
+                 {selectedMonth.bu_data && selectedMonth.bu_data.map((item, idx) => {
                    const op = item.gm - item.fixed;
                    const ratio = item.rev > 0 ? (item.fixed / item.rev) * 100 : 0;
                    return (
@@ -226,19 +243,14 @@ const Chapter0_Executive = ({ pnlData, onPnlChange, historyData, onSaveArchive }
                   </th>
                   <th className="py-3 px-2 text-right font-semibold w-24">GM (B)</th>
                   <th className="py-3 px-2 text-right font-semibold w-24">고정비 (B)</th>
-                  
-                  {/* [변경] Prev OP 제거 -> 고정비율 추가 */}
                   <th className="py-3 px-2 text-right font-semibold w-24 text-slate-500">고정비율 (%)</th>
-                  
                   <th className="py-3 px-4 text-right font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200" onClick={() => handleSort('op')}>
                     Act OP <ArrowUpDown size={12} className="inline ml-1"/>
                   </th>
-                  {/* [변경] Diff 컬럼 제거됨 */}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {rows.map((row) => {
-                  // [추가] 고정비 비율 계산
                   const ratio = row.rev > 0 ? (row.fixed / row.rev) * 100 : 0;
                   
                   return (
@@ -253,7 +265,7 @@ const Chapter0_Executive = ({ pnlData, onPnlChange, historyData, onSaveArchive }
                         </div>
                       </td>
 
-                      {/* [EDITABLE] GM (매출총이익) */}
+                      {/* [EDITABLE] GM */}
                       <td className="py-2 px-2">
                         <div className="flex items-center justify-end gap-1 bg-white border border-slate-200 rounded px-2 py-0.5 w-full focus-within:ring-2 focus-within:ring-green-500">
                           <input type="number" step="0.01" className="w-full text-right outline-none text-slate-600 font-medium bg-transparent text-sm"
@@ -269,14 +281,13 @@ const Chapter0_Executive = ({ pnlData, onPnlChange, historyData, onSaveArchive }
                         </div>
                       </td>
 
-                      {/* [변경] Prev OP 제거 -> 고정비율 표시 */}
+                      {/* 고정비율 */}
                       <td className={`py-4 px-2 text-right text-xs pt-6 ${ratio >= 30 ? 'text-amber-600 font-bold' : 'text-slate-400'}`}>
                         {ratio.toFixed(1)}%
                       </td>
 
                       {/* Auto-Calculated OP */}
                       <td className={`py-4 px-4 text-right font-bold text-base pt-5 bg-slate-50/50 ${row.op < 0 ? 'text-red-500' : 'text-slate-800'}`}>{row.op.toFixed(2)}</td>
-                      {/* [변경] Diff 제거됨 */}
                     </tr>
                   );
                 })}
@@ -291,7 +302,6 @@ const Chapter0_Executive = ({ pnlData, onPnlChange, historyData, onSaveArchive }
                         <td className="py-3 px-2 text-right text-slate-800">{total.rev.toFixed(1)}</td>
                         <td className="py-3 px-2 text-right text-slate-800">{total.gm.toFixed(1)}</td>
                         <td className="py-3 px-2 text-right text-slate-800">{total.fixed.toFixed(1)}</td>
-                        {/* [변경] Total Ratio 표시 */}
                         <td className="py-3 px-2 text-right text-slate-600 text-xs">{totalRatio.toFixed(1)}%</td>
                         <td className={`py-3 px-4 text-right text-lg ${total.op < 0 ? 'text-red-600' : 'text-slate-900'}`}>{total.op.toFixed(2)}</td>
                       </>
@@ -319,10 +329,12 @@ const Chapter0_Executive = ({ pnlData, onPnlChange, historyData, onSaveArchive }
                   onChange={(e) => setSaveMonthName(e.target.value)}
                 />
                 <button 
-                  onClick={() => onSaveArchive(saveMonthName)}
-                  className="bg-indigo-600 text-white text-xs font-bold px-3 py-2 rounded-lg hover:bg-indigo-700 transition flex items-center gap-1"
+                  onClick={handleSaveClick}
+                  disabled={isSaving}
+                  className="bg-indigo-600 text-white text-xs font-bold px-3 py-2 rounded-lg hover:bg-indigo-700 transition flex items-center gap-1 disabled:opacity-50"
                 >
-                  <Save size={14}/> 저장
+                  {isSaving ? <Loader2 size={14} className="animate-spin"/> : <Save size={14}/>}
+                  {isSaving ? '저장 중' : '저장'}
                 </button>
              </div>
              <p className="text-[10px] text-indigo-400 mt-1.5 pl-1">
@@ -331,24 +343,28 @@ const Chapter0_Executive = ({ pnlData, onPnlChange, historyData, onSaveArchive }
           </div>
           
           <div className="space-y-3 flex-1 overflow-y-auto max-h-[400px]">
-            {(historyData || []).map((item, idx) => (
-              <div 
-                key={idx} 
-                onClick={() => setSelectedMonth(item)}
-                className="group flex items-center justify-between p-4 rounded-xl border border-slate-100 hover:border-indigo-300 hover:bg-indigo-50/30 cursor-pointer transition-all relative overflow-hidden"
-              >
-                <div className="absolute left-0 top-0 bottom-0 w-1 bg-slate-200 group-hover:bg-indigo-500 transition-colors"></div>
-                <div>
-                  <h4 className="font-bold text-slate-800 group-hover:text-indigo-700">{item.month}</h4>
-                  <span className="text-xs text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded mt-1 inline-block">{item.status}</span>
-                </div>
-                <div className="text-right">
-                  <p className="text-sm font-bold text-slate-700">OP {item.totalOp >= 0 ? '+' : ''}{item.totalOp.toFixed(2)}B</p>
-                  <p className="text-xs text-slate-400">View Detail</p>
-                </div>
-                <ChevronRight size={16} className="text-slate-300 group-hover:text-indigo-500 group-hover:translate-x-1 transition-transform"/>
-              </div>
-            ))}
+            {(!historyData || historyData.length === 0) ? (
+                <div className="text-center text-slate-400 text-sm py-10">저장된 아카이브가 없습니다.</div>
+            ) : (
+                historyData.map((item, idx) => (
+                  <div 
+                    key={idx} 
+                    onClick={() => setSelectedMonth(item)}
+                    className="group flex items-center justify-between p-4 rounded-xl border border-slate-100 hover:border-indigo-300 hover:bg-indigo-50/30 cursor-pointer transition-all relative overflow-hidden"
+                  >
+                    <div className="absolute left-0 top-0 bottom-0 w-1 bg-slate-200 group-hover:bg-indigo-500 transition-colors"></div>
+                    <div>
+                      <h4 className="font-bold text-slate-800 group-hover:text-indigo-700">{item.month}</h4>
+                      <span className="text-xs text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded mt-1 inline-block">{item.status}</span>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-sm font-bold text-slate-700">OP {item.totalOp >= 0 ? '+' : ''}{item.totalOp.toFixed(2)}B</p>
+                      <p className="text-xs text-slate-400">View Detail</p>
+                    </div>
+                    <ChevronRight size={16} className="text-slate-300 group-hover:text-indigo-500 group-hover:translate-x-1 transition-transform"/>
+                  </div>
+                ))
+            )}
           </div>
         </div>
       </div>
