@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from './supabaseClient'; // [중요] Supabase 클라이언트 임포트
+import { supabase } from './supabaseClient';
 import { 
   LayoutDashboard, Factory, TrendingDown, Users, ClipboardList,
   Menu, ChevronRight, Search, Bell, Settings, BarChart3,
-  X, AlertCircle, Info, Loader2, LogOut, Cloud, Check
+  X, AlertCircle, Info, Loader2, LogOut, Cloud, Check,
+  BrainCircuit // [추가] 아이콘 Import
 } from 'lucide-react';
 
 // 컴포넌트 불러오기
@@ -14,32 +15,47 @@ import Chapter2_Production from './components/Chapter2_Production';
 import Chapter3_CostReduction from './components/Chapter3_CostReduction';
 import Chapter4_Headcount from './components/Chapter4_Headcount';
 import Chapter5_ActionTracker from './components/Chapter5_ActionTracker';
+import Chapter6_AI_Insights from './components/Chapter6_AI_Insights'; // [추가] Chapter 6 Import
 
 const App = () => {
-  // --- [Authentication State] ---
   const [session, setSession] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
 
-  // --- [App State] ---
   const [activeTab, setActiveTab] = useState('chapter0');
-  const [isMenuOpen, setIsMenuOpen] = useState(true);
+  
+  // [Responsive State] 화면 너비 1024px(lg) 이상이면 메뉴 열림(Desktop), 미만이면 닫힘(Mobile)
+  const [isMenuOpen, setIsMenuOpen] = useState(window.innerWidth >= 1024);
+  
   const [dataLoading, setDataLoading] = useState(false);
-  const [isSaving, setIsSaving] = useState(false); // [NEW] 저장 중 로딩 상태
+  const [isSaving, setIsSaving] = useState(false);
 
-  // --- [Data State] ---
+  // Data State
   const [pnlData, setPnlData] = useState([]);
   const [historyData, setHistoryData] = useState([]);
   const [prodStats, setProdStats] = useState([]);
   const [crActions, setCrActions] = useState([]);
   const [headcountDB, setHeadcountDB] = useState({});
 
-  // --- [UI Feature State] ---
+  // UI State
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [isSearchFocused, setIsSearchFocused] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [notifications, setNotifications] = useState([]);
 
+  // --- [Responsive Logic] 화면 크기 변경 감지 ---
+  useEffect(() => {
+    const handleResize = () => {
+      if (window.innerWidth >= 1024) {
+        setIsMenuOpen(true); 
+      } else {
+        setIsMenuOpen(false); 
+      }
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+  
   // --- [1. Auth Check Logic] ---
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -93,7 +109,7 @@ const App = () => {
     }
   };
 
-  // --- [NEW] Global Save Logic (Cloud Sync) ---
+  // --- [Global Save Logic (Cloud Sync)] ---
   const handleGlobalSave = async () => {
     if (isSaving) return;
     setIsSaving(true);
@@ -123,38 +139,32 @@ const App = () => {
 
       await Promise.all(promises);
 
-      // 성공 알림 추가
-      const newNoti = { id: Date.now(), type: 'success', msg: '모든 데이터가 클라우드에 성공적으로 저장되었습니다.' };
+      const newNoti = { id: Date.now(), type: 'success', msg: 'Saved successfully to Cloud.' };
       setNotifications(prev => [newNoti, ...prev]);
-      
-      // 3초 후 알림 자동 삭제 (옵션)
       setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== newNoti.id)), 3000);
 
     } catch (error) {
       console.error("Global Save Error:", error);
-      alert("데이터 저장 중 오류가 발생했습니다.");
+      alert("Error saving data.");
     } finally {
-      // UX를 위해 최소 0.5초 대기 후 로딩 상태 해제
       setTimeout(() => setIsSaving(false), 500);
     }
   };
 
-  // [NEW] Keyboard Shortcut Listener (Ctrl + S)
+  // [Keyboard Shortcut Listener (Ctrl + S)]
   useEffect(() => {
     const handleKeyDown = (event) => {
-      // Ctrl+S (Windows/Linux) or Command+S (Mac)
       if ((event.ctrlKey || event.metaKey) && event.key === 's') {
-        event.preventDefault(); // 브라우저 기본 저장 대화상자 차단
+        event.preventDefault(); 
         handleGlobalSave();
       }
     };
-
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [pnlData, prodStats, crActions, headcountDB]); // 최신 상태를 참조하기 위해 의존성 배열 추가
+  }, [pnlData, prodStats, crActions, headcountDB]);
 
 
-  // --- [Existing Logic] Search & Notification ---
+  // --- [Search & Notification Logic] ---
   useEffect(() => {
     if (searchQuery.trim() === '') {
       setSearchResults([]);
@@ -174,7 +184,7 @@ const App = () => {
   // --- [Handlers] ---
   const handleLogout = async () => { await supabase.auth.signOut(); };
   
-  // Data Handlers (Optimistic Updates + Supabase Direct Update)
+  // Data Handlers
   const handlePnlChange = async (id, field, value) => {
     const numValue = value === '' ? 0 : parseFloat(value);
     const updatedData = pnlData.map(row => {
@@ -184,25 +194,24 @@ const App = () => {
       return newRow;
     });
     setPnlData(updatedData);
-    // 개별 수정 시에도 즉시 저장 (Global Save는 일괄 동기화/백업 용도)
     await supabase.from('pnl_data').update(updatedData.find(r => r.id === id)).eq('id', id);
   };
 
   const handleSaveToArchive = async (monthName) => {
-    if (!monthName) return alert("저장할 '년-월'을 선택해주세요.");
+    if (!monthName) return alert("Select Month");
     const totalRev = pnlData.reduce((acc, cur) => acc + cur.rev, 0);
     const totalGm = pnlData.reduce((acc, cur) => acc + cur.gm, 0);
     const totalFixed = pnlData.reduce((acc, cur) => acc + cur.fixed, 0);
     const totalOp = totalGm - totalFixed;
     const ratio = totalRev > 0 ? (totalFixed / totalRev) * 100 : 0;
     const newEntryData = { 
-        month: monthName, status: '마감 완료', totalOp, rev: totalRev, fixed: totalFixed, ratio, 
+        month: monthName, status: 'Closed', totalOp, rev: totalRev, fixed: totalFixed, ratio, 
         bu_data: pnlData, 
-        cost_details: [] // Ch.1 데이터는 여기서 별도 조회하지 않음 (필요 시 수정 가능)
+        cost_details: [] 
     };
     const { error } = await supabase.from('history_archive').upsert({ month: monthName, data: newEntryData });
     if (!error) {
-      alert(`${monthName} 실적이 저장되었습니다.`);
+      alert(`${monthName} Archived.`);
       setHistoryData(prev => {
         const filtered = prev.filter(h => h.month !== monthName);
         return [newEntryData, ...filtered].sort((a, b) => b.month.localeCompare(a.month));
@@ -221,15 +230,22 @@ const App = () => {
   const handleCrActionsUpdate = async (newActions) => {
     setCrActions(newActions);
   };
+  
+  const handleMenuClick = (tab) => {
+    setActiveTab(tab);
+    if (window.innerWidth < 1024) setIsMenuOpen(false);
+    setSearchQuery(''); setSearchResults([]); setIsSearchFocused(false);
+  };
+  
   const handleSearchResultClick = (tab) => {
-    setActiveTab(tab); setSearchQuery(''); setSearchResults([]); setIsSearchFocused(false);
+      handleMenuClick(tab);
   };
 
   if (authLoading) return <div className="min-h-screen flex items-center justify-center bg-slate-50"><Loader2 className="animate-spin text-indigo-500" size={32}/></div>;
   if (!session) return <Login />;
 
   const renderContent = () => {
-    if (dataLoading) return <div className="flex h-[calc(100vh-200px)] items-center justify-center flex-col gap-4"><Loader2 className="animate-spin text-blue-600" size={48}/><p className="text-slate-500 font-medium">데이터를 불러오는 중입니다...</p></div>;
+    if (dataLoading) return <div className="flex h-[calc(100vh-200px)] items-center justify-center flex-col gap-4"><Loader2 className="animate-spin text-blue-600" size={48}/><p className="text-slate-500 font-medium">Loading Data...</p></div>;
     switch (activeTab) {
       case 'chapter0': return <Chapter0_Executive pnlData={pnlData} onPnlChange={handlePnlChange} historyData={historyData} onSaveArchive={handleSaveToArchive} />;
       case 'chapter1': return <Chapter1_FixedCost pnlData={pnlData} historyData={historyData} />;
@@ -239,60 +255,119 @@ const App = () => {
       case 'chapter5': 
         const latestMonth = Object.keys(headcountDB).sort().pop() || '2024-12';
         return <Chapter5_ActionTracker pnlData={pnlData} prodStats={prodStats} crActions={crActions} depts={headcountDB[latestMonth]} />;
+      // [추가] Chapter 6 렌더링 연결
+      case 'chapter6':
+  return (
+    <Chapter6_AI_Insights 
+      pnlData={pnlData} 
+      prodStats={prodStats} 
+      historyData={historyData} // [추가] 과거 실적 데이터 전달
+      headcountDB={headcountDB} // [추가] 인력 데이터 전달
+    />
+  );
       default: return null;
     }
   };
 
   const headerTitle = {
     chapter0: 'Executive Dashboard', chapter1: 'Fixed Cost Management', chapter2: 'Production & Sales',
-    chapter3: 'Cost Reduction', chapter4: 'HR Management', chapter5: 'Action Tracker'
+    chapter3: 'Cost Reduction', chapter4: 'HR Management', chapter5: 'Action Tracker',
+    chapter6: 'AI & Prediction Analysis' // [추가] 헤더 타이틀
   }[activeTab];
 
   return (
-    <div className="min-h-screen bg-slate-50/50 font-sans text-slate-900 flex" onClick={() => { setIsSearchFocused(false); setShowNotifications(false); }}>
-      {/* Sidebar */}
-      <div className={`${isMenuOpen ? 'w-80' : 'w-20'} bg-slate-900 border-r border-slate-800 transition-all duration-300 flex flex-col z-30 shadow-xl`} onClick={e => e.stopPropagation()}>
-        <div className="h-16 flex items-center justify-between px-6 border-b border-slate-800/50 bg-slate-900">
-          {isMenuOpen && (
-            <div className="flex items-center gap-3 text-white">
-              <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center shadow-lg shadow-blue-900/50"><span className="text-white font-bold text-lg leading-none">I</span></div>
-              <div><span className="block font-bold text-lg tracking-tight leading-none text-slate-100">ITCHEM</span><span className="text-[10px] font-medium text-blue-400 tracking-widest uppercase">Global Operations</span></div>
+    <div className="min-h-screen bg-slate-50/50 font-sans text-slate-900 flex overflow-hidden" onClick={() => { setIsSearchFocused(false); setShowNotifications(false); }}>
+      
+      {/* [Mobile Overlay] */}
+      {isMenuOpen && (
+        <div 
+          className="fixed inset-0 bg-black/50 z-20 lg:hidden backdrop-blur-sm"
+          onClick={() => setIsMenuOpen(false)}
+        />
+      )}
+
+      {/* [Sidebar] Responsive Drawer */}
+      <div className={`
+        fixed inset-y-0 left-0 z-30 bg-slate-900 border-r border-slate-800 transition-all duration-300 ease-in-out shadow-2xl flex flex-col
+        ${isMenuOpen ? 'translate-x-0 w-64' : '-translate-x-full lg:translate-x-0 lg:w-20'} 
+        lg:static lg:flex-shrink-0
+      `} onClick={e => e.stopPropagation()}>
+        
+        {/* Sidebar Header */}
+        <div className="h-16 flex items-center justify-between px-4 lg:px-6 border-b border-slate-800/50 bg-slate-900 shrink-0">
+          <div className={`flex items-center gap-3 text-white ${!isMenuOpen && 'lg:mx-auto'}`}>
+            <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center shadow-lg shadow-blue-900/50 shrink-0">
+               <span className="text-white font-bold text-lg leading-none">I</span>
             </div>
-          )}
-          <button onClick={() => setIsMenuOpen(!isMenuOpen)} className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition"><Menu size={20} /></button>
+            <div className={`overflow-hidden transition-all duration-300 ${!isMenuOpen ? 'lg:w-0 lg:opacity-0 lg:hidden' : 'block'}`}>
+               <span className="block font-bold text-lg tracking-tight leading-none text-slate-100">SUNCHEM</span>
+               <span className="text-[10px] font-medium text-blue-400 tracking-widest uppercase">Global Ops</span>
+            </div>
+          </div>
+          <button onClick={() => setIsMenuOpen(false)} className="lg:hidden text-slate-400 hover:text-white p-1 rounded hover:bg-slate-800">
+             <X size={24} />
+          </button>
         </div>
+
+        {/* Navigation */}
         <nav className="flex-1 py-6 px-3 space-y-1 overflow-y-auto scrollbar-hide">
           <MenuHeading isOpen={isMenuOpen} text="Overview" />
-          <MenuButton active={activeTab === 'chapter0'} onClick={() => setActiveTab('chapter0')} icon={<BarChart3 size={20} />} label="1. 경영 요약" isOpen={isMenuOpen} />
+          <MenuButton active={activeTab === 'chapter0'} onClick={() => handleMenuClick('chapter0')} icon={<BarChart3 size={20} />} label="1. 경영 요약" isOpen={isMenuOpen} />
           <div className="my-2 border-t border-slate-800/50 mx-2"></div>
           <MenuHeading isOpen={isMenuOpen} text="Operations" />
-          <MenuButton active={activeTab === 'chapter1'} onClick={() => setActiveTab('chapter1')} icon={<LayoutDashboard size={20} />} label="2. 고정비 관리" isOpen={isMenuOpen} />
-          <MenuButton active={activeTab === 'chapter2'} onClick={() => setActiveTab('chapter2')} icon={<Factory size={20} />} label="3. 생산·매출" isOpen={isMenuOpen} />
-          <MenuButton active={activeTab === 'chapter3'} onClick={() => setActiveTab('chapter3')} icon={<TrendingDown size={20} />} label="4. 원가절감" isOpen={isMenuOpen} />
+          <MenuButton active={activeTab === 'chapter1'} onClick={() => handleMenuClick('chapter1')} icon={<LayoutDashboard size={20} />} label="2. 고정비 관리" isOpen={isMenuOpen} />
+          <MenuButton active={activeTab === 'chapter2'} onClick={() => handleMenuClick('chapter2')} icon={<Factory size={20} />} label="3. 생산·매출" isOpen={isMenuOpen} />
+          <MenuButton active={activeTab === 'chapter3'} onClick={() => handleMenuClick('chapter3')} icon={<TrendingDown size={20} />} label="4. 원가절감" isOpen={isMenuOpen} />
           <div className="my-2 border-t border-slate-800/50 mx-2"></div>
           <MenuHeading isOpen={isMenuOpen} text="Organization" />
-          <MenuButton active={activeTab === 'chapter4'} onClick={() => setActiveTab('chapter4')} icon={<Users size={20} />} label="5. 인력 관리" isOpen={isMenuOpen} />
-          <MenuButton active={activeTab === 'chapter5'} onClick={() => setActiveTab('chapter5')} icon={<ClipboardList size={20} />} label="6. 액션 트래커" isOpen={isMenuOpen} />
+          <MenuButton active={activeTab === 'chapter4'} onClick={() => handleMenuClick('chapter4')} icon={<Users size={20} />} label="5. 인력 관리" isOpen={isMenuOpen} />
+          <MenuButton active={activeTab === 'chapter5'} onClick={() => handleMenuClick('chapter5')} icon={<ClipboardList size={20} />} label="6. 액션 트래커" isOpen={isMenuOpen} />
+          
+          {/* [추가] Chapter 6 메뉴 버튼 */}
+          <div className="my-2 border-t border-slate-800/50 mx-2"></div>
+          <MenuHeading isOpen={isMenuOpen} text="Future Intelligence" />
+          <MenuButton active={activeTab === 'chapter6'} onClick={() => handleMenuClick('chapter6')} icon={<BrainCircuit size={20} />} label="7. AI & 예측 분석" isOpen={isMenuOpen} />
         </nav>
-        <div className="p-4 border-t border-slate-800 mx-2 mb-2">
-          <div className={`flex items-center gap-3 p-2 rounded-lg transition-colors ${isMenuOpen ? 'bg-slate-800/50 hover:bg-slate-800' : 'justify-center'}`}>
-            <div className="w-9 h-9 rounded-full bg-indigo-600 flex items-center justify-center text-white font-bold text-sm border border-slate-600">{session.user.email[0].toUpperCase()}</div>
-            {isMenuOpen && <div className="overflow-hidden flex-1"><p className="text-sm font-bold text-slate-200 truncate">{session.user.email.split('@')[0]}</p><p className="text-xs text-slate-500 truncate">Administrator</p></div>}
-            {isMenuOpen && <button onClick={handleLogout} className="text-slate-500 hover:text-red-400 transition" title="Logout"><LogOut size={16}/></button>}
-          </div>
+
+        {/* User Profile */}
+        <div className="p-4 border-t border-slate-800 mx-2 mb-2 shrink-0">
+           <div className={`flex items-center gap-3 p-2 rounded-lg transition-colors ${isMenuOpen ? 'bg-slate-800/50 hover:bg-slate-800' : 'justify-center'}`}>
+             <div className="w-9 h-9 rounded-full bg-indigo-600 flex items-center justify-center text-white font-bold text-sm border border-slate-600 shrink-0">
+                {session.user.email[0].toUpperCase()}
+             </div>
+             {isMenuOpen && (
+                 <div className="overflow-hidden flex-1 min-w-0">
+                     <p className="text-sm font-bold text-slate-200 truncate">{session.user.email.split('@')[0]}</p>
+                     <p className="text-xs text-slate-500 truncate">Administrator</p>
+                 </div>
+             )}
+             {isMenuOpen && <button onClick={handleLogout} className="text-slate-500 hover:text-red-400 transition ml-auto" title="Logout"><LogOut size={16}/></button>}
+           </div>
         </div>
       </div>
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col h-screen overflow-hidden relative bg-[#F8FAFC]">
-        <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-8 z-20 sticky top-0 shadow-sm" onClick={e => e.stopPropagation()}>
-          <div>
-            <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2 tracking-tight">{headerTitle}</h2>
-            <p className="text-xs font-medium text-slate-500 mt-0.5">ITCHEM Global Operations System</p>
+        {/* Header */}
+        <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-4 lg:px-8 z-20 sticky top-0 shadow-sm shrink-0" onClick={e => e.stopPropagation()}>
+          <div className="flex items-center gap-3">
+             <button onClick={() => setIsMenuOpen(!isMenuOpen)} className="text-slate-500 hover:text-slate-700 lg:hidden">
+               <Menu size={24} />
+             </button>
+             <button onClick={() => setIsMenuOpen(!isMenuOpen)} className="hidden lg:block text-slate-400 hover:text-slate-600 mr-2">
+               <Menu size={20} />
+             </button>
+
+             <div>
+               <h2 className="text-lg lg:text-xl font-bold text-slate-800 flex items-center gap-2 tracking-tight truncate max-w-[200px] sm:max-w-none">
+                 {headerTitle}
+               </h2>
+               <p className="text-[10px] lg:text-xs font-medium text-slate-500 hidden sm:block">SUNCHEM Global Operations System</p>
+             </div>
           </div>
           
-          <div className="flex items-center gap-4">
-             {/* [NEW] Save to Cloud Button */}
+          <div className="flex items-center gap-2 lg:gap-4">
+             {/* Save Button */}
              <button 
                 onClick={handleGlobalSave}
                 disabled={isSaving}
@@ -300,11 +375,11 @@ const App = () => {
                 title="Save all changes to Cloud (Ctrl+S)"
              >
                 {isSaving ? <Loader2 size={18} className="animate-spin"/> : <Cloud size={18} />}
-                <span className="text-xs font-bold hidden sm:inline">{isSaving ? 'Saving...' : 'Save to Cloud'}</span>
+                <span className="text-xs font-bold hidden md:inline">{isSaving ? 'Saving...' : 'Save'}</span>
              </button>
 
-             {/* Search Input */}
-             <div className="hidden lg:block relative w-64">
+             {/* Search Input (Desktop) */}
+             <div className="hidden md:block relative w-48 lg:w-64">
                 <div className="flex items-center bg-slate-100 rounded-lg px-3 py-2 border border-slate-200 focus-within:border-blue-500 focus-within:ring-1 focus-within:ring-blue-500 transition-all">
                   <Search size={16} className="text-slate-400 mr-2"/>
                   <input 
@@ -321,7 +396,6 @@ const App = () => {
                     </button>
                   )}
                 </div>
-                {/* Search Results Dropdown (생략 없이 포함) */}
                 {isSearchFocused && searchQuery && (
                   <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-lg shadow-xl border border-slate-100 overflow-hidden z-50 animate-fade-in-up max-h-80 overflow-y-auto">
                     {searchResults.length > 0 ? (
@@ -337,18 +411,22 @@ const App = () => {
                           <ChevronRight size={14} className="text-slate-300 group-hover:text-blue-500"/>
                         </div>
                       ))
-                    ) : (<div className="p-4 text-center text-sm text-slate-400">검색 결과가 없습니다.</div>)}
+                    ) : (<div className="p-4 text-center text-sm text-slate-400">No results found.</div>)}
                   </div>
                 )}
              </div>
 
-             {/* Notification Bell */}
-             <div className="flex items-center gap-3 text-slate-400 relative">
+             <button className="md:hidden p-2 text-slate-500 hover:text-slate-700">
+               <Search size={20}/>
+             </button>
+
+             {/* Notification */}
+             <div className="relative">
                 <button 
                   className={`p-2 rounded-md transition relative ${showNotifications ? 'bg-blue-50 text-blue-600' : 'hover:bg-slate-100 hover:text-blue-600'}`}
                   onClick={() => setShowNotifications(!showNotifications)}
                 >
-                  <Bell size={18} />
+                  <Bell size={20} />
                   {notifications.length > 0 && <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full border border-white animate-pulse"></span>}
                 </button>
                 {showNotifications && (
@@ -373,8 +451,8 @@ const App = () => {
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto p-6 scrollbar-hide relative z-10">
-          <div className="max-w-[1600px] mx-auto space-y-6">
+        <main className="flex-1 overflow-y-auto p-4 lg:p-6 scrollbar-hide relative z-10">
+          <div className="max-w-[1600px] mx-auto space-y-6 pb-20 lg:pb-0">
             {renderContent()}
           </div>
         </main>
@@ -383,7 +461,19 @@ const App = () => {
   );
 };
 
-const MenuHeading = ({ isOpen, text }) => (<div className={`px-4 pb-2 pt-4 ${!isOpen && 'hidden'}`}><p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">{text}</p></div>);
-const MenuButton = ({ active, onClick, icon, label, isOpen }) => (<button onClick={onClick} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13px] transition-all duration-200 group relative ${active ? 'bg-blue-600 text-white font-semibold shadow-md shadow-blue-900/20' : 'text-slate-400 hover:bg-slate-800 hover:text-white font-medium'}`}><span className={active ? 'text-white' : 'text-slate-400 group-hover:text-white transition'}>{icon}</span>{isOpen && <span className="whitespace-nowrap flex-1 text-left truncate">{label}</span>}{active && isOpen && <ChevronRight size={14} className="text-blue-300 ml-auto"/>}</button>);
+// --- [Sub Components] ---
+const MenuHeading = ({ isOpen, text }) => (
+  <div className={`px-4 pb-2 pt-4 ${!isOpen && 'hidden'}`}>
+    <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">{text}</p>
+  </div>
+);
+
+const MenuButton = ({ active, onClick, icon, label, isOpen }) => (
+  <button onClick={onClick} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13px] transition-all duration-200 group relative ${active ? 'bg-blue-600 text-white font-semibold shadow-md shadow-blue-900/20' : 'text-slate-400 hover:bg-slate-800 hover:text-white font-medium'}`}>
+    <span className={`shrink-0 ${active ? 'text-white' : 'text-slate-400 group-hover:text-white transition'}`}>{icon}</span>
+    <span className={`whitespace-nowrap flex-1 text-left truncate transition-all duration-300 ${!isOpen ? 'w-0 opacity-0 hidden' : 'w-auto opacity-100 block'}`}>{label}</span>
+    {active && isOpen && <ChevronRight size={14} className="text-blue-300 ml-auto"/>}
+  </button>
+);
 
 export default App;

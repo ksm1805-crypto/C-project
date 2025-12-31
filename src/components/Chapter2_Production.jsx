@@ -3,7 +3,7 @@ import {
   ComposedChart, Line, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, BarChart, Cell
 } from 'recharts';
 import { 
-  Factory, CheckCircle, Calendar, AlertTriangle, TrendingUp, Activity, BarChart3
+  Factory, CheckCircle, Calendar, AlertTriangle, TrendingUp, Activity, BarChart3, Ban
 } from 'lucide-react';
 
 // --- [Data: Weekly Checklist] ---
@@ -33,16 +33,24 @@ const Chapter2_Production = ({ historyData, pnlData, prodStats, onUpdateStats })
       const cleanStat = {
         oled: stat?.oled || 0,
         api: stat?.api || 0,
-        new_biz: stat?.new_biz || 0, // DB Column Name
+        new_biz: stat?.new_biz || 0,
         late: stat?.late || 0,
-        util: stat?.util || 0
+        util: stat?.util || 0,
+        defect: stat?.defect || 0,      
+        rework: stat?.rework || 0,      
       };
       
       const fin = historyData ? historyData.find(h => h.month === month) : null;
       const rev = fin ? fin.rev : 0;
 
       const totalBatch = cleanStat.oled + cleanStat.api + cleanStat.new_biz;
+      
+      // OTD 계산
       const otd = totalBatch > 0 ? ((totalBatch - cleanStat.late) / totalBatch) * 100 : 0;
+      
+      // 불량률 계산: (불량 + 재작업) / 총 Lot
+      const defectRate = totalBatch > 0 ? ((cleanStat.defect + cleanStat.rework) / totalBatch) * 100 : 0;
+
       const revPerBatch = totalBatch > 0 ? (rev / totalBatch) : 0;
 
       return {
@@ -51,7 +59,8 @@ const Chapter2_Production = ({ historyData, pnlData, prodStats, onUpdateStats })
         totalBatch,
         revenue: rev,
         revPerBatch,
-        otd
+        otd,
+        defectRate
       };
     });
 
@@ -91,6 +100,7 @@ const Chapter2_Production = ({ historyData, pnlData, prodStats, onUpdateStats })
       const newEntry = { 
         month: selectedMonth, 
         oled: 0, api: 0, new_biz: 0, late: 0, util: 0, 
+        defect: 0, rework: 0, 
         [field]: numVal 
       };
       updatedStats = [...prodStats, newEntry].sort((a, b) => a.month.localeCompare(b.month));
@@ -114,7 +124,7 @@ const Chapter2_Production = ({ historyData, pnlData, prodStats, onUpdateStats })
     <div className="space-y-6 animate-fade-in pb-10">
       
       {/* Header */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-2">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-2 mb-2">
         <div>
           <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
             <Factory className="text-blue-600"/> 생산·매출 연동 관리
@@ -127,14 +137,16 @@ const Chapter2_Production = ({ historyData, pnlData, prodStats, onUpdateStats })
 
       <div className="space-y-6 animate-fade-in">
           {/* 1. Month Selector */}
-          <div className="flex justify-between items-center bg-white p-4 rounded-lg shadow-sm border border-slate-100">
-             <span className="text-sm font-bold text-slate-500 flex items-center gap-2"><Calendar size={16}/> 조회 월 선택 (최근 6개월):</span>
-             <div className="flex bg-slate-100 p-1 rounded-lg overflow-x-auto">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-white p-4 rounded-lg shadow-sm border border-slate-100 gap-3">
+             <span className="text-sm font-bold text-slate-500 flex items-center gap-2">
+                <Calendar size={16}/> 조회 월 선택 (최근 6개월):
+             </span>
+             <div className="flex bg-slate-100 p-1 rounded-lg overflow-x-auto w-full sm:w-auto scrollbar-hide">
                 {mergedData.map(d => (
                    <button
                       key={d.month}
                       onClick={() => setSelectedMonth(d.month)}
-                      className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all whitespace-nowrap ${
+                      className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all whitespace-nowrap flex-1 sm:flex-none text-center ${
                          selectedMonth === d.month 
                          ? 'bg-white text-blue-700 shadow-sm' 
                          : 'text-slate-400 hover:text-slate-600'
@@ -146,8 +158,9 @@ const Chapter2_Production = ({ historyData, pnlData, prodStats, onUpdateStats })
              </div>
           </div>
 
-          {/* 2. Batch Input Section */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-5">
+          {/* 2. Batch Input Section (Responsive Grid) */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-5">
+             {/* 설비 가동률 */}
              <div className="bg-white p-5 rounded-lg shadow-sm border border-slate-200 group focus-within:ring-2 ring-blue-500 transition-all">
                 <div className="flex justify-between mb-2">
                    <span className="text-xs font-bold text-slate-500 uppercase">설비 가동률</span>
@@ -155,7 +168,7 @@ const Chapter2_Production = ({ historyData, pnlData, prodStats, onUpdateStats })
                 </div>
                 <div className="flex items-baseline gap-1">
                    <input 
-                      type="number" className="text-3xl font-extrabold text-slate-900 w-20 bg-transparent outline-none border-b border-dashed border-slate-300 focus:border-blue-500"
+                      type="number" className="text-3xl font-extrabold text-slate-900 w-24 bg-transparent outline-none border-b border-dashed border-slate-300 focus:border-blue-500 p-0"
                       value={currentStat.util || 0} onChange={(e) => handleInputChange('util', e.target.value)}
                    />
                    <span className="text-sm font-bold text-slate-400">%</span>
@@ -163,12 +176,13 @@ const Chapter2_Production = ({ historyData, pnlData, prodStats, onUpdateStats })
                 <p className="text-xs text-slate-400 mt-2">Target 85%</p>
              </div>
 
-             <div className="md:col-span-2 bg-white p-5 rounded-lg shadow-sm border border-slate-200">
+             {/* 월 생산 Batch (2칸 차지 -> 모바일 1칸) */}
+             <div className="md:col-span-2 lg:col-span-2 bg-white p-5 rounded-lg shadow-sm border border-slate-200">
                 <div className="flex justify-between items-center mb-4">
                    <h3 className="font-bold text-slate-700 flex items-center gap-2 text-sm uppercase">
-                      <Factory size={16} className="text-blue-500"/> 월 생산 Batch 입력 ({selectedMonth})
+                      <Factory size={16} className="text-blue-500"/> 월 생산 Batch ({selectedMonth})
                    </h3>
-                   <span className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded text-xs font-bold">Total: {currentStat.totalBatch || 0} Batch</span>
+                   <span className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded text-xs font-bold whitespace-nowrap">Total: {currentStat.totalBatch || 0}</span>
                 </div>
                 <div className="grid grid-cols-3 gap-4">
                    {[
@@ -189,6 +203,7 @@ const Chapter2_Production = ({ historyData, pnlData, prodStats, onUpdateStats })
                 </div>
              </div>
 
+             {/* 납기 준수율 (OTD) */}
              <div className="bg-white p-5 rounded-lg shadow-sm border border-slate-200 relative overflow-hidden">
                 <div className={`absolute top-0 left-0 bottom-0 w-1 ${currentStat.otd >= 95 ? 'bg-green-500' : 'bg-red-500'}`}></div>
                 <div className="flex justify-between mb-2 pl-2">
@@ -202,17 +217,52 @@ const Chapter2_Production = ({ historyData, pnlData, prodStats, onUpdateStats })
                    <div className="flex items-center gap-2 mt-2 bg-slate-50 p-1.5 rounded-lg">
                       <span className="text-xs text-slate-500">지연:</span>
                       <input 
-                         type="number" className="w-8 text-right text-sm font-bold bg-white border border-slate-300 rounded focus:border-red-500 outline-none px-1"
+                         type="number" className="w-12 text-right text-sm font-bold bg-white border border-slate-300 rounded focus:border-red-500 outline-none px-1"
                          value={currentStat.late || 0} onChange={(e) => handleInputChange('late', e.target.value)}
                       />
                       <span className="text-xs text-slate-400">Batch</span>
                    </div>
                 </div>
              </div>
+
+             {/* 불량률 카드 */}
+             <div className="bg-white p-5 rounded-lg shadow-sm border border-slate-200 relative overflow-hidden group focus-within:ring-2 ring-amber-500 transition-all">
+                <div className="absolute top-0 left-0 bottom-0 w-1 bg-amber-500"></div>
+                <div className="flex justify-between mb-2 pl-2">
+                   <span className="text-xs font-bold text-slate-500 uppercase">품질 불량률</span>
+                   <Ban size={16} className="text-amber-500"/>
+                </div>
+                <div className="pl-2">
+                   <h3 className={`text-3xl font-extrabold ${(currentStat.defectRate || 0) > 5 ? 'text-red-600' : 'text-slate-800'}`}>
+                      {(currentStat.defectRate || 0).toFixed(1)}%
+                   </h3>
+                   
+                   <div className="grid grid-cols-2 gap-2 mt-3">
+                      <div className="flex flex-col">
+                         <span className="text-[10px] font-bold text-slate-400 mb-0.5">불량 (Lot)</span>
+                         <input 
+                            type="number" 
+                            className="text-right text-sm font-bold border-b border-slate-200 outline-none focus:border-amber-500 bg-transparent" 
+                            value={currentStat.defect || 0} 
+                            onChange={(e) => handleInputChange('defect', e.target.value)} 
+                         />
+                      </div>
+                      <div className="flex flex-col">
+                         <span className="text-[10px] font-bold text-slate-400 mb-0.5">재작업 (Lot)</span>
+                         <input 
+                            type="number" 
+                            className="text-right text-sm font-bold border-b border-slate-200 outline-none focus:border-amber-500 bg-transparent" 
+                            value={currentStat.rework || 0} 
+                            onChange={(e) => handleInputChange('rework', e.target.value)} 
+                         />
+                      </div>
+                   </div>
+                </div>
+             </div>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-             {/* Charts */}
+             {/* Chart 1 */}
              <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200">
                 <h3 className="font-bold text-slate-700 mb-4 flex items-center justify-between">
                    <span className="flex items-center gap-2"><BarChart3 size={18} className="text-blue-500"/> 사업부별 생산 효율성</span>
@@ -222,15 +272,13 @@ const Chapter2_Production = ({ historyData, pnlData, prodStats, onUpdateStats })
                       <BarChart data={buAnalysisData} margin={{ top: 20, right: 20, bottom: 20, left: 20 }} barGap={0}>
                          <CartesianGrid stroke="#f1f5f9" vertical={false} />
                          <XAxis dataKey="name" axisLine={false} tickLine={false} style={{ fontSize: '12px', fill: '#64748b' }} />
-                         <YAxis yAxisId="left" label={{ value: 'Batch 수', angle: -90, position: 'insideLeft', fill:'#94a3b8' }} axisLine={false} tickLine={false} />
-                         <YAxis yAxisId="right" orientation="right" label={{ value: 'Rev/Batch (B)', angle: 90, position: 'insideRight', fill:'#94a3b8' }} axisLine={false} tickLine={false} />
+                         <YAxis yAxisId="left" label={{ value: 'Batch 수', angle: -90, position: 'insideLeft', fill:'#94a3b8', fontSize: 10 }} axisLine={false} tickLine={false} />
+                         <YAxis yAxisId="right" orientation="right" label={{ value: 'Rev/Batch', angle: 90, position: 'insideRight', fill:'#94a3b8', fontSize: 10 }} axisLine={false} tickLine={false} />
                          
-                         {/* [수정 완료] name 비교 로직을 'Batch당 매출(우)'로 변경하여 툴팁 오류 해결 */}
                          <Tooltip 
                             cursor={{fill: 'transparent'}}
                             contentStyle={{ borderRadius: '8px', border: '1px solid #e2e8f0', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)' }}
                             formatter={(value, name) => {
-                                // name은 <Bar> 컴포넌트의 name 속성값을 따라갑니다.
                                 if (name === 'Batch당 매출(우)') {
                                     return [`₩ ${Number(value).toFixed(2)}B`, 'Batch당 매출'];
                                 }
@@ -238,16 +286,17 @@ const Chapter2_Production = ({ historyData, pnlData, prodStats, onUpdateStats })
                             }}
                          />
                          <Legend />
-                         <Bar yAxisId="left" dataKey="batch" name="생산량(좌)" fill="#3B82F6" barSize={40} radius={[4,4,0,0]} />
-                         <Bar yAxisId="right" dataKey="eff" name="Batch당 매출(우)" fill="#F97316" barSize={40} radius={[4,4,0,0]} />
+                         <Bar yAxisId="left" dataKey="batch" name="생산량(좌)" fill="#3B82F6" barSize={30} radius={[4,4,0,0]} />
+                         <Bar yAxisId="right" dataKey="eff" name="Batch당 매출(우)" fill="#F97316" barSize={30} radius={[4,4,0,0]} />
                       </BarChart>
                    </ResponsiveContainer>
                 </div>
              </div>
 
+             {/* Chart 2 */}
              <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200">
                 <h3 className="font-bold text-slate-700 mb-4 flex items-center justify-between">
-                   <span className="flex items-center gap-2"><TrendingUp size={18} className="text-emerald-500"/> 월별 생산 vs 매출 트렌드 (최근 6개월)</span>
+                   <span className="flex items-center gap-2"><TrendingUp size={18} className="text-emerald-500"/> 월별 생산 vs 매출 트렌드</span>
                 </h3>
                 <div className="h-64">
                    <ResponsiveContainer width="100%" height="100%">
@@ -266,12 +315,12 @@ const Chapter2_Production = ({ historyData, pnlData, prodStats, onUpdateStats })
              </div>
           </div>
           
-          {/* Weekly Rhythm Checklist (로컬 상태 유지) */}
+          {/* Weekly Rhythm Checklist (Responsive) */}
           <div className="bg-white p-6 rounded-lg shadow-sm border border-slate-200">
               <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2">
                  <Calendar size={18} className="text-orange-500"/> {selectedMonth} 운영 리듬 체크
               </h3>
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                  {tasks.map((task, idx) => (
                     <div 
                        key={idx} 
@@ -295,7 +344,7 @@ const Chapter2_Production = ({ historyData, pnlData, prodStats, onUpdateStats })
                              onChange={(e) => handleTaskTextChange(idx, 'title', e.target.value)}
                           />
                           <textarea 
-                             className={`w-full text-xs mt-1 bg-transparent outline-none resize-none h-10 ${task.done ? 'text-slate-300' : 'text-slate-500'}`}
+                             className={`w-full text-xs mt-1 bg-transparent outline-none resize-none h-12 ${task.done ? 'text-slate-300' : 'text-slate-500'}`}
                              value={task.desc}
                              onChange={(e) => handleTaskTextChange(idx, 'desc', e.target.value)}
                           />

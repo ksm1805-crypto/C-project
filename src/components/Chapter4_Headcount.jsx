@@ -112,7 +112,7 @@ const Chapter4_Headcount = ({ pnlData, headcountDB, onHeadcountUpdate, prodStats
     setSelectedDept(updatedDept);
   };
 
-  // [수정] 인원 데이터 초기화 (전월 데이터 복사 로직 추가)
+  // 인원 데이터 초기화 (전월 데이터 복사 로직)
   const handleInitMonth = () => {
     if (!selectedMonth) return;
 
@@ -127,7 +127,7 @@ const Chapter4_Headcount = ({ pnlData, headcountDB, onHeadcountUpdate, prodStats
 
     if (prevMonth) {
       confirmMsg = `${selectedMonth}월 데이터를 생성하시겠습니까?\n(전월 ${prevMonth} 데이터가 복사됩니다)`;
-      // Deep Copy로 참조 끊기 (매우 중요)
+      // Deep Copy
       initialData = JSON.parse(JSON.stringify(headcountDB[prevMonth]));
     } else {
       confirmMsg = `${selectedMonth}월 인력 데이터를 초기화하시겠습니까? (기본 템플릿 생성)`;
@@ -149,26 +149,28 @@ const Chapter4_Headcount = ({ pnlData, headcountDB, onHeadcountUpdate, prodStats
     return <div className="flex h-64 items-center justify-center text-slate-400"><Loader2 className="animate-spin mr-2"/> 데이터 로딩 중...</div>;
   }
 
-  // --- [View 1: Detail View] ---
+  // --- [View 1: Detail View (Responsive)] ---
   if (selectedDept) {
     return (
       <div className="space-y-6 animate-fade-in bg-slate-50 min-h-screen pb-10">
-        <div className="flex items-center justify-between bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+        {/* Detail Header */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between bg-white p-6 rounded-2xl shadow-sm border border-slate-200 gap-4">
           <div>
             <button onClick={() => setSelectedDept(null)} className="text-sm text-slate-500 hover:text-indigo-600 flex items-center gap-1 mb-2 font-medium">
               <ArrowLeft size={16}/> Back to Overview
             </button>
             <h2 className="text-2xl font-bold text-slate-900 flex items-center gap-3">
               <div className={`w-3 h-3 rounded-full`} style={{ backgroundColor: selectedDept.color }}></div>
-              {selectedDept.name} 인력 상세 관리 ({selectedMonth})
+              {selectedDept.name} 인력 상세
             </h2>
           </div>
-          <div className="text-right">
+          <div className="md:text-right border-t md:border-t-0 pt-4 md:pt-0 border-slate-100">
              <p className="text-xs text-slate-500 font-bold uppercase">Total Headcount</p>
              <p className="text-2xl font-bold text-slate-800">{selectedDept.count}명</p>
           </div>
         </div>
         
+        {/* Detail Table */}
         <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
           <div className="flex justify-between items-center mb-4">
             <h3 className="font-bold text-slate-700 flex items-center gap-2">
@@ -178,52 +180,56 @@ const Chapter4_Headcount = ({ pnlData, headcountDB, onHeadcountUpdate, prodStats
               <UserPlus size={16} /> 인원 추가
             </button>
           </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm text-left">
-              <thead className="bg-slate-50 text-slate-500 font-medium border-y border-slate-200 uppercase text-xs">
-                <tr>
-                  <th className="py-3 px-3 w-24">직급</th>
-                  <th className="py-3 px-3 w-32">성명</th>
-                  <th className="py-3 px-3">핵심 과제 (R&R)</th>
-                  <th className="py-3 px-3 w-24 text-center">상태</th>
-                  <th className="py-3 px-3 w-16 text-center">삭제</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {(selectedDept.members || []).map(member => (
-                  <tr key={member.id} className="hover:bg-slate-50/50">
-                    <td className="py-2 px-3"><input className="w-full bg-transparent outline-none border-b border-transparent focus:border-indigo-300 transition-colors" placeholder="직급" value={member.position} onChange={e => handleMemberChange(member.id, 'position', e.target.value)} /></td>
-                    <td className="py-2 px-3"><input className="w-full bg-transparent outline-none border-b border-transparent focus:border-indigo-300 font-bold text-slate-700 transition-colors" placeholder="이름" value={member.name} onChange={e => handleMemberChange(member.id, 'name', e.target.value)} /></td>
-                    <td className="py-2 px-3"><input className="w-full bg-transparent outline-none border-b border-transparent focus:border-indigo-300 text-slate-600 transition-colors" placeholder="과제 내용 입력..." value={member.task} onChange={e => handleMemberChange(member.id, 'task', e.target.value)} /></td>
-                    <td className="py-2 px-3 text-center">
-                      <select className="bg-slate-50 border-none rounded text-xs py-1 px-2 outline-none cursor-pointer text-slate-600 font-medium" value={member.status} onChange={e => handleMemberChange(member.id, 'status', e.target.value)}>
-                        <option value="대기">대기</option><option value="진행">진행</option><option value="완료">완료</option><option value="지연">지연</option>
-                      </select>
-                    </td>
-                    <td className="py-2 px-3 text-center"><button onClick={() => handleDeleteMember(member.id)} className="text-slate-300 hover:text-red-500 transition"><Trash2 size={16} /></button></td>
+          
+          {/* Responsive Table Wrapper */}
+          <div className="overflow-x-auto -mx-4 md:mx-0">
+            <div className="min-w-[600px] px-4 md:px-0">
+              <table className="w-full text-sm text-left">
+                <thead className="bg-slate-50 text-slate-500 font-medium border-y border-slate-200 uppercase text-xs">
+                  <tr>
+                    <th className="py-3 px-3 w-24">직급</th>
+                    <th className="py-3 px-3 w-32">성명</th>
+                    <th className="py-3 px-3">핵심 과제 (R&R)</th>
+                    <th className="py-3 px-3 w-24 text-center">상태</th>
+                    <th className="py-3 px-3 w-16 text-center">관리</th>
                   </tr>
-                ))}
-                {(!selectedDept.members || selectedDept.members.length === 0) && <tr><td colSpan="5" className="py-8 text-center text-slate-400">등록된 인원이 없습니다.</td></tr>}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {(selectedDept.members || []).map(member => (
+                    <tr key={member.id} className="hover:bg-slate-50/50">
+                      <td className="py-2 px-3"><input className="w-full bg-transparent outline-none border-b border-transparent focus:border-indigo-300 transition-colors" placeholder="직급" value={member.position} onChange={e => handleMemberChange(member.id, 'position', e.target.value)} /></td>
+                      <td className="py-2 px-3"><input className="w-full bg-transparent outline-none border-b border-transparent focus:border-indigo-300 font-bold text-slate-700 transition-colors" placeholder="이름" value={member.name} onChange={e => handleMemberChange(member.id, 'name', e.target.value)} /></td>
+                      <td className="py-2 px-3"><input className="w-full bg-transparent outline-none border-b border-transparent focus:border-indigo-300 text-slate-600 transition-colors" placeholder="과제 내용 입력..." value={member.task} onChange={e => handleMemberChange(member.id, 'task', e.target.value)} /></td>
+                      <td className="py-2 px-3 text-center">
+                        <select className="bg-slate-50 border-none rounded text-xs py-1 px-2 outline-none cursor-pointer text-slate-600 font-medium" value={member.status} onChange={e => handleMemberChange(member.id, 'status', e.target.value)}>
+                          <option value="대기">대기</option><option value="진행">진행</option><option value="완료">완료</option><option value="지연">지연</option>
+                        </select>
+                      </td>
+                      <td className="py-2 px-3 text-center"><button onClick={() => handleDeleteMember(member.id)} className="text-slate-300 hover:text-red-500 transition"><Trash2 size={16} /></button></td>
+                    </tr>
+                  ))}
+                  {(!selectedDept.members || selectedDept.members.length === 0) && <tr><td colSpan="5" className="py-8 text-center text-slate-400">등록된 인원이 없습니다.</td></tr>}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       </div>
     );
   }
 
-  // --- [View 2: Overview] ---
+  // --- [View 2: Overview (Responsive)] ---
   return (
-    <div className="space-y-6 animate-fade-in pb-10">
+    <div className="space-y-6 animate-fade-in pb-20 lg:pb-10">
       {/* 1. Header & Select Month */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-4">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-3">
          <div>
             <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
               <Users className="text-indigo-600"/> 인력 및 생산성 관리
             </h2>
             <p className="text-sm text-slate-500 mt-1">부서별 인원 배치 및 인당 생산성(Productivity) 분석</p>
          </div>
-         <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-sm">
+         <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-sm self-end sm:self-auto">
             <Calendar size={16} className="text-slate-400"/>
             <span className="text-xs text-slate-500 font-bold">조회 기준:</span>
             <select 
@@ -239,8 +245,8 @@ const Chapter4_Headcount = ({ pnlData, headcountDB, onHeadcountUpdate, prodStats
          </div>
       </div>
 
-      {/* 2. KPI Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-5">
+      {/* 2. KPI Cards (Responsive Grid) */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-5">
         <KPICard title="총 인원 (Headcount)" value={`${summary.totalHeadcount}명`} sub="부서별 합계" alert={false} />
         
         <KPICard 
@@ -249,7 +255,7 @@ const Chapter4_Headcount = ({ pnlData, headcountDB, onHeadcountUpdate, prodStats
           sub={
             <span className="flex items-center gap-1">
               {summary.isArchived ? <span className="text-green-600 font-bold text-[10px] bg-green-50 px-1 rounded">Archived</span> : <span className="text-amber-600 font-bold text-[10px] bg-amber-50 px-1 rounded">Live P&L</span>}
-              Total Rev: {summary.totalRevenue.toFixed(1)}B
+              Total: {summary.totalRevenue.toFixed(1)}B
             </span>
           }
           alert={summary.revPerHead < 0.15} 
@@ -296,7 +302,6 @@ const Chapter4_Headcount = ({ pnlData, headcountDB, onHeadcountUpdate, prodStats
               <AlertCircle className="text-slate-300" size={32}/>
               <p className="text-sm text-slate-500">{selectedMonth}월 인력 데이터가 없습니다.</p>
               <button onClick={handleInitMonth} className="bg-indigo-50 text-indigo-600 px-4 py-2 rounded-lg text-sm font-bold hover:bg-indigo-100 transition">
-                {/* [수정] 버튼 텍스트 변경 */}
                 데이터 생성하기 (전월 복사)
               </button>
             </div>
@@ -339,6 +344,7 @@ const Chapter4_Headcount = ({ pnlData, headcountDB, onHeadcountUpdate, prodStats
           )}
         </div>
 
+        {/* 4. Charts */}
         <div className="col-span-1 space-y-6">
             <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
                 <h3 className="font-bold text-slate-700 mb-6 flex items-center gap-2 text-sm">
