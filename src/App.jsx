@@ -444,7 +444,6 @@ const App = () => {
          <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-6 shrink-0" onClick={e=>e.stopPropagation()}>
             <div className="flex items-center gap-4">
                <button onClick={()=>setIsMenuOpen(!isMenuOpen)} className="lg:hidden"><Menu/></button>
-               <h2 className="font-bold text-lg">Executive Dashboard</h2>
             </div>
             <div className="flex items-center gap-3">
                

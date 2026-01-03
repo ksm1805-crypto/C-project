@@ -14,7 +14,7 @@ const SECTIONS = [
 
 const Chapter5_ActionTracker = ({
   pnlData, prodStats, crActions, depts,
-  selectedMonth, onMonthChange
+  selectedMonth, onMonthChange // [수정] 부모에서 받는 state와 handler 사용
 }) => {
   const [loading, setLoading] = useState(true);
   const [manualActions, setManualActions] = useState([]);
@@ -32,13 +32,6 @@ const Chapter5_ActionTracker = ({
     const months = [...new Set(prodStats.map(p => p.month))].sort();
     return months;
   }, [prodStats]);
-
-  // 초기 로딩 시 가장 최신 월 선택
-  useEffect(() => {
-    if (availableMonths.length > 0 && !selectedMonth) {
-      setSelectedMonth(availableMonths[availableMonths.length - 1]);
-    }
-  }, [availableMonths]);
 
   // --- [Supabase Logic 1] 데이터 Fetch ---
   useEffect(() => {
@@ -87,12 +80,17 @@ const Chapter5_ActionTracker = ({
 
     // 시스템 아이템 생성 헬퍼 함수
     const createSysItem = (id, category, text, owner, risk) => {
-      const state = systemStates[id] || { is_resolved: false, is_hidden: false };
+      // [수정 핵심] ID에 월(selectedMonth)을 포함시켜 월별 상태 분리
+      const uniqueId = `${id}-${selectedMonth}`; 
+      
+      const state = systemStates[uniqueId] || { is_resolved: false, is_hidden: false };
       // 사용자가 숨김 처리한 항목은 제외
       if (state.is_hidden) return null;
 
       return {
-        id, category, text, owner, risk,
+        id: uniqueId, // [수정] 유니크 ID 사용
+        originalId: id,
+        category, text, owner, risk,
         due: selectedMonth,
         isSystem: true,
         isDone: state.is_resolved
@@ -108,7 +106,7 @@ const Chapter5_ActionTracker = ({
       
       if (ratio > 25) { 
         const item = createSysItem(
-          'sys-fixed-1', 
+          'sys-fixed-ratio', // [수정] 기본 ID
           'fixed', 
           `고정비 비중 ${ratio.toFixed(1)}%로 목표(25%) 초과`, 
           'System', 
@@ -145,7 +143,7 @@ const Chapter5_ActionTracker = ({
         const otd = totalBatch > 0 ? ((totalBatch - (targetStat.late || 0)) / totalBatch) * 100 : 100;
         if (otd < 95) {
            const item = createSysItem(
-             `sys-prod-otd-${targetStat.month}`, 
+             `sys-prod-otd`, // [수정] 월 정보는 createSysItem 내부에서 붙음
              'prod', 
              `${targetStat.month} 납기 준수율 ${otd.toFixed(1)}% (목표 95% 미달)`, 
              '생산팀', 
@@ -157,7 +155,7 @@ const Chapter5_ActionTracker = ({
         // (2) 가동률 (Util) < 85%
         if ((targetStat.util || 0) < 85) {
            const item = createSysItem(
-             `sys-prod-util-${targetStat.month}`, 
+             `sys-prod-util`, 
              'prod', 
              `${targetStat.month} 가동률 ${targetStat.util}% (목표 85% 미달)`, 
              '생산팀', 
@@ -171,7 +169,7 @@ const Chapter5_ActionTracker = ({
         const defectRate = totalBatch > 0 ? (defectCount / totalBatch) * 100 : 0;
         if (defectRate > 5) {
             const item = createSysItem(
-                `sys-prod-defect-${targetStat.month}`,
+                `sys-prod-defect`,
                 'prod',
                 `[품질] ${targetStat.month} 불량률 ${defectRate.toFixed(1)}% (목표 5% 초과)`,
                 '품질팀',
@@ -184,6 +182,7 @@ const Chapter5_ActionTracker = ({
 
     // 4. [Auto] 인력 이슈 (HR 부서원 상태 체크)
     if (depts) {
+      // depts가 현재 월 데이터인지 부모 컴포넌트 확인 필요하지만, 로직상으로는 문제없음
       depts.forEach(dept => {
         dept.members.forEach(m => {
           if (m.status === '지연' || m.status === '리스크') {
@@ -246,12 +245,12 @@ const Chapter5_ActionTracker = ({
   };
 
   const handleDelete = async (id, isSystem) => {
-    const msg = isSystem ? '이 시스템 항목을 목록에서 숨기시겠습니까?' : '이 항목을 삭제하시겠습니까?';
+    const msg = isSystem ? '이 시스템 항목을 목록에서 숨기시겠습니까? (이번 달)' : '이 항목을 삭제하시겠습니까?';
     if (!window.confirm(msg)) return;
 
     try {
       if (isSystem) {
-        // 시스템 이슈는 '삭제'가 아니라 '숨김' 처리
+        // 시스템 이슈 숨김
         const { error } = await supabase
           .from('system_issue_states')
           .upsert({ 
@@ -268,7 +267,7 @@ const Chapter5_ActionTracker = ({
         }));
 
       } else {
-        // 수기 이슈는 실제 삭제
+        // 수기 이슈 삭제
         const { error } = await supabase.from('manual_actions').delete().eq('id', id);
         if (error) throw error;
         setManualActions(prev => prev.filter(m => m.id !== id));
@@ -313,7 +312,7 @@ const Chapter5_ActionTracker = ({
         if (error) throw error;
 
         setManualActions(prev => prev.map(m => 
-          m.id === id ? { ...m, is_done: newDone, is_done: newDone } : m 
+          m.id === id ? { ...m, is_done: newDone } : m 
         ));
       }
     } catch (e) {
@@ -333,7 +332,7 @@ const Chapter5_ActionTracker = ({
   return (
     <div className="space-y-6 h-full flex flex-col pb-20 lg:pb-10">
       
-      {/* 1. Header & Controls (Responsive) */}
+      {/* 1. Header & Controls */}
       <div className="bg-white p-5 rounded-lg shadow-sm border border-slate-200 flex flex-col xl:flex-row justify-between items-center gap-4">
         <div className="w-full xl:w-auto">
            <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
@@ -342,7 +341,7 @@ const Chapter5_ActionTracker = ({
            <p className="text-sm text-slate-500 mt-1">4대 핵심 영역별 이슈 및 액션 아이템 통합 관리</p>
         </div>
         
-        {/* [Responsive Input Form] 모바일: 세로, PC: 가로 */}
+        {/* Input Form */}
         <div className="w-full xl:w-auto bg-slate-50 p-3 rounded-lg border border-slate-200 flex flex-col md:flex-row gap-2">
             <select 
               className="px-2 py-2 rounded border border-slate-200 text-sm font-bold text-slate-700 outline-none focus:border-blue-500 bg-white"
@@ -381,16 +380,16 @@ const Chapter5_ActionTracker = ({
         </div>
       </div>
 
-      {/* 2. Month Selector & Progress (Responsive) */}
+      {/* 2. Month Selector & Progress */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end px-1 gap-3">
-        {/* Month Selector */}
+        {/* [수정] 부모 컴포넌트의 onMonthChange 호출 */}
         <div className="flex items-center gap-2 text-slate-600 bg-white px-3 py-1.5 rounded-full shadow-sm border border-slate-200 w-full sm:w-auto">
            <Calendar size={14}/>
            <span className="text-sm font-bold mr-1">조회 월:</span>
            <select 
               className="text-sm font-bold text-blue-600 bg-transparent outline-none cursor-pointer flex-1"
               value={selectedMonth}
-              onChange={(e) => setSelectedMonth(e.target.value)}
+              onChange={(e) => onMonthChange(e.target.value)} 
            >
               {availableMonths.map(m => (
                 <option key={m} value={m}>{m} 월</option>
@@ -410,8 +409,7 @@ const Chapter5_ActionTracker = ({
         </div>
       </div>
 
-      {/* 3. The Matrix Grid (Responsive) */}
-      {/* 모바일: 1열, PC: 2열 */}
+      {/* 3. The Matrix Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-6 flex-1 min-h-[600px]">
         {SECTIONS.map((section) => {
           const items = categorizedItems[section.id];

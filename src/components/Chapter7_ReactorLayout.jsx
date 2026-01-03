@@ -384,14 +384,31 @@ const Chapter7_ReactorLayout = ({
     }
   };
 
-  // --- Data Entry Handlers ---
+  // --- Data Entry Handlers (Modified) ---
   const handleAddItem = () => {
+    // 1. 선택된 월이 있다면 해당 월의 1일~5일로 설정
+    // selectedMonth Format: "YYYY-MM"
+    let startStr = '';
+    let endStr = '';
+
+    if (selectedMonth) {
+        startStr = `${selectedMonth}-01`;
+        endStr = `${selectedMonth}-05`;
+    } else {
+        // Fallback: 오늘 날짜
+        const today = new Date();
+        startStr = today.toISOString().split('T')[0];
+        const future = new Date(today);
+        future.setDate(today.getDate() + 4);
+        endStr = future.toISOString().split('T')[0];
+    }
+
     setEditingItems([...editingItems, {
       id: generateId(), 
       category: 'OLED', 
       name: '', 
-      startDate: `${selectedMonth}-01`, 
-      endDate: `${selectedMonth}-05`, 
+      startDate: startStr, 
+      endDate: endStr, 
       quantity: 0, 
       price: 0
     }]);
@@ -444,7 +461,7 @@ const Chapter7_ReactorLayout = ({
       return items.map(item => ({
           ...item,
           reactorName: rName,
-          reactorId: log.reactor_id, // [New] 식별자 추가
+          reactorId: log.reactor_id, 
           totalVal: ((safeNum(item.quantity) * safeNum(item.price))) / 1000000000
       }));
   }).sort((a, b) => {
@@ -471,7 +488,7 @@ const Chapter7_ReactorLayout = ({
       .map(([cat, data]) => ({ category: cat, ...data }))
       .sort((a, b) => b.revenue - a.revenue);
 
-  // [New] Summary Item Click Handler
+  // Summary Item Click Handler
   const handleSummaryItemClick = (reactorId) => {
     const reactor = localReactors.find(r => r.id === reactorId);
     if (reactor) setSelectedReactor(reactor);
@@ -645,7 +662,6 @@ const Chapter7_ReactorLayout = ({
                   <div className="text-center py-10 text-slate-400 text-sm">No production planned.</div>
                ) : (
                   allMonthlyItems.map((item, idx) => (
-                    // [New] Added onClick handler and cursor style
                     <div 
                         key={idx} 
                         onClick={() => handleSummaryItemClick(item.reactorId)}
@@ -740,7 +756,7 @@ const Chapter7_ReactorLayout = ({
                     <div>
                         <div className="flex justify-between items-end mb-2">
                              <label className="flex items-center gap-2 text-sm font-bold text-slate-700"><Package size={16}/> Schedule</label>
-                             <button type="button" onClick={handleAddItem} className="text-xs flex items-center gap-1 bg-indigo-50 text-indigo-600 px-2 py-1 rounded hover:bg-indigo-100 font-bold transition"><Plus size={14}/> Add</button>
+                             <button type="button" onClick={handleAddItem} className="text-xs flex items-center gap-1 bg-indigo-50 text-indigo-600 px-2 py-1 rounded hover:bg-indigo-100 font-bold transition"><Plus size={14}/> Add Item</button>
                         </div>
                         <div className="space-y-3">
                             {editingItems.map((item, idx) => {
@@ -807,11 +823,29 @@ const Chapter7_ReactorLayout = ({
                                                 </div>
                                             )}
 
+                                            {/* [Modified] Date Inputs */}
                                             <div className="flex items-center gap-2">
-                                                <input type="date" value={item.startDate} onChange={(e) => handleItemChange(item.id, 'startDate', e.target.value)} className="w-full text-xs bg-transparent outline-none font-medium text-slate-600"/>
-                                                <span className="text-slate-300">~</span>
-                                                <input type="date" value={item.endDate} onChange={(e) => handleItemChange(item.id, 'endDate', e.target.value)} className="w-full text-xs bg-transparent outline-none font-medium text-slate-600"/>
+                                                <div className="flex-1 relative">
+                                                    <span className="text-[9px] text-slate-400 absolute -top-1.5 left-0">Start</span>
+                                                    <input 
+                                                        type="date" 
+                                                        value={item.startDate} 
+                                                        onChange={(e) => handleItemChange(item.id, 'startDate', e.target.value)} 
+                                                        className="w-full text-xs bg-transparent border-b border-slate-200 py-1 outline-none font-medium text-slate-700 focus:border-indigo-500"
+                                                    />
+                                                </div>
+                                                <span className="text-slate-300 mt-2">~</span>
+                                                <div className="flex-1 relative">
+                                                    <span className="text-[9px] text-slate-400 absolute -top-1.5 left-0">End</span>
+                                                    <input 
+                                                        type="date" 
+                                                        value={item.endDate} 
+                                                        onChange={(e) => handleItemChange(item.id, 'endDate', e.target.value)} 
+                                                        className="w-full text-xs bg-transparent border-b border-slate-200 py-1 outline-none font-medium text-slate-700 focus:border-indigo-500"
+                                                    />
+                                                </div>
                                             </div>
+
                                             <div className="flex gap-2">
                                                 <div className="flex-1 flex items-center border border-slate-200 rounded px-2 bg-slate-50">
                                                     <span className="text-[10px] text-slate-400 mr-1">Qty</span>
