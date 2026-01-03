@@ -12,13 +12,13 @@ const SECTIONS = [
   { id: 'hr', title: '인력/조직 (HR & Org)', color: 'bg-slate-700', icon: <Users size={18} />, desc: '채용, 핵심인재 관리, R&R 조정' }
 ];
 
-const Chapter5_ActionTracker = ({ pnlData, prodStats, crActions, depts }) => {
-  const [selectedMonth, setSelectedMonth] = useState('2024-12');
+const Chapter5_ActionTracker = ({
+  pnlData, prodStats, crActions, depts,
+  selectedMonth, onMonthChange
+}) => {
   const [loading, setLoading] = useState(true);
-  
-  // [State] DB Data
-  const [manualActions, setManualActions] = useState([]); 
-  const [systemStates, setSystemStates] = useState({});   
+  const [manualActions, setManualActions] = useState([]);
+  const [systemStates, setSystemStates] = useState({});
 
   // [State] Input Form
   const [newItem, setNewItem] = useState({ 

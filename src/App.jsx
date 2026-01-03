@@ -1,479 +1,523 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { supabase } from './supabaseClient';
-import { 
+import {
   LayoutDashboard, Factory, TrendingDown, Users, ClipboardList,
-  Menu, ChevronRight, Search, Bell, Settings, BarChart3,
+  Menu, ChevronRight, Search, Bell, BarChart3,
   X, AlertCircle, Info, Loader2, LogOut, Cloud, Check,
-  BrainCircuit // [추가] 아이콘 Import
+  BrainCircuit, Plus, Trash2 
 } from 'lucide-react';
 
-// 컴포넌트 불러오기
-import Login from './Login'; 
+// Component Imports
+import Login from './Login';
 import Chapter0_Executive from './components/Chapter0_Executive';
-import Chapter1_FixedCost from './components/Chapter1_FixedCost';
-import Chapter2_Production from './components/Chapter2_Production';
-import Chapter3_CostReduction from './components/Chapter3_CostReduction';
-import Chapter4_Headcount from './components/Chapter4_Headcount';
-import Chapter5_ActionTracker from './components/Chapter5_ActionTracker';
-import Chapter6_AI_Insights from './components/Chapter6_AI_Insights'; // [추가] Chapter 6 Import
+import Chapter1_AI_Insights from './components/Chapter1_AI_Insights';
+import Chapter2_FixedCost from './components/Chapter2_FixedCost';
+import Chapter3_Production from './components/Chapter3_Production';
+import Chapter4_CostReduction from './components/Chapter4_CostReduction';
+import Chapter5_Headcount from './components/Chapter5_Headcount';
+import Chapter6_ActionTracker from './components/Chapter6_ActionTracker';
+import Chapter7_ReactorLayout from './components/Chapter7_ReactorLayout';
+
+// [Optimization] Memoization
+const MemoChapter0 = React.memo(Chapter0_Executive);
+const MemoChapter1 = React.memo(Chapter1_AI_Insights);
+const MemoChapter2 = React.memo(Chapter2_FixedCost);
+const MemoChapter3 = React.memo(Chapter3_Production);
+const MemoChapter4 = React.memo(Chapter4_CostReduction);
+const MemoChapter5 = React.memo(Chapter5_Headcount);
+const MemoChapter6 = React.memo(Chapter6_ActionTracker);
+const MemoChapter7 = React.memo(Chapter7_ReactorLayout);
+
+// [Utility] Safe Data Handling
+const safeNum = (v) => {
+  const n = parseFloat(v);
+  return Number.isFinite(n) ? n : 0;
+};
+
+// [Security] 관리자 비밀번호 설정 (원하는 비밀번호로 변경하세요)
+const ADMIN_PASSWORD = "1234";
 
 const App = () => {
   const [session, setSession] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
 
   const [activeTab, setActiveTab] = useState('chapter0');
-  
-  // [Responsive State] 화면 너비 1024px(lg) 이상이면 메뉴 열림(Desktop), 미만이면 닫힘(Mobile)
   const [isMenuOpen, setIsMenuOpen] = useState(window.innerWidth >= 1024);
-  
+
   const [dataLoading, setDataLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false); 
 
-  // Data State
+  // --- Data State ---
   const [pnlData, setPnlData] = useState([]);
   const [historyData, setHistoryData] = useState([]);
   const [prodStats, setProdStats] = useState([]);
   const [crActions, setCrActions] = useState([]);
   const [headcountDB, setHeadcountDB] = useState({});
 
-  // UI State
+  const [reactorConfig, setReactorConfig] = useState([]);
+  const [reactorLogs, setReactorLogs] = useState([]);
+
+  // Global Month
+  const [workMonth, setWorkMonth] = useState(() => {
+    return localStorage.getItem('sunchem_current_month') || new Date().toISOString().slice(0, 7);
+  });
+
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [isSearchFocused, setIsSearchFocused] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [notifications, setNotifications] = useState([]);
 
-  // --- [Responsive Logic] 화면 크기 변경 감지 ---
-  useEffect(() => {
-    const handleResize = () => {
-      if (window.innerWidth >= 1024) {
-        setIsMenuOpen(true); 
-      } else {
-        setIsMenuOpen(false); 
+  // --- [Data Sync Logic] ---
+  const calculatePnlFromLogs = useCallback((currentPnl, currentLogs, targetMonth) => {
+    const monthlyLogs = currentLogs.filter(l => String(l.month).slice(0, 7) === targetMonth);
+    
+    let revenueMap = { 'OLED': 0, 'API': 0, '신사업': 0 };
+    
+    for (const log of monthlyLogs) {
+      if (Array.isArray(log.items)) {
+        for (const item of log.items) {
+          const cat = (item.category || 'OLED');
+          const revenueB = (safeNum(item.quantity) * safeNum(item.price)) / 1_000_000_000;
+          
+          if (cat === 'OLED') revenueMap['OLED'] += revenueB;
+          else if (cat === 'API') revenueMap['API'] += revenueB;
+          else revenueMap['신사업'] += revenueB;
+        }
       }
-    };
+    }
+
+    return currentPnl.map(row => {
+      let newRev = row.rev;
+      const name = (row.name || '').toUpperCase();
+
+      if (name.includes('OLED')) newRev = revenueMap['OLED'];
+      else if (name.includes('API') || name.includes('중간체')) newRev = revenueMap['API'];
+      else if (name.includes('신사업') || name.includes('NEW')) newRev = revenueMap['신사업'];
+      else return row; 
+
+      if (Math.abs(newRev - row.rev) > 0.001) {
+        return { ...row, rev: parseFloat(newRev.toFixed(3)) };
+      }
+      return row;
+    });
+  }, []);
+
+  // --- Auth & Data Fetch ---
+  useEffect(() => {
+    const handleResize = () => setIsMenuOpen(window.innerWidth >= 1024);
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
-  
-  // --- [1. Auth Check Logic] ---
+
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       setAuthLoading(false);
     });
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-    });
-
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => setSession(session));
     return () => subscription.unsubscribe();
   }, []);
 
-  // --- [2. Data Fetch Logic] ---
   useEffect(() => {
-    if (session) {
-      fetchAllData();
-    }
+    if (session) fetchAllData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
 
   const fetchAllData = async () => {
     try {
       setDataLoading(true);
-      const [pnlRes, histRes, prodRes, crRes, headRes] = await Promise.all([
+      const [pnlRes, histRes, prodRes, crRes, headRes, rConfigRes, rLogRes] = await Promise.all([
         supabase.from('pnl_data').select('*').order('id'),
         supabase.from('history_archive').select('*'),
         supabase.from('prod_stats').select('*').order('month'),
         supabase.from('cr_actions').select('*').order('id'),
-        supabase.from('headcount_db').select('*')
+        supabase.from('headcount_db').select('*'),
+        supabase.from('reactor_config').select('*').order('id'),
+        supabase.from('reactor_logs').select('*'),
       ]);
 
-      if (pnlRes.data) setPnlData(pnlRes.data);
+      let loadedPnl = pnlRes.data || [];
+      const loadedLogs = rLogRes.data || [];
+
+      // Unit Check
+      loadedPnl = loadedPnl.map(row => ({
+        ...row,
+        rev: row.rev > 1000 ? row.rev / 1_000_000_000 : row.rev,
+        gm: row.gm > 1000 ? row.gm / 1_000_000_000 : row.gm,
+        fixed: row.fixed > 1000 ? row.fixed / 1_000_000_000 : row.fixed,
+      }));
+
+      // Initial Sync
+      if (loadedLogs.length > 0 && loadedPnl.length > 0) {
+        loadedPnl = calculatePnlFromLogs(loadedPnl, loadedLogs, workMonth);
+      }
+
+      setPnlData(loadedPnl);
+      setReactorLogs(loadedLogs);
+      setReactorConfig(rConfigRes.data || []);
+
       if (histRes.data) {
-        const parsedHistory = histRes.data.map(h => h.data).sort((a, b) => b.month.localeCompare(a.month));
-        setHistoryData(parsedHistory);
-      }
-      if (prodRes.data) setProdStats(prodRes.data);
-      if (crRes.data) setCrActions(crRes.data);
-      if (headRes.data) {
-        const dbMap = {};
-        headRes.data.forEach(row => {
-          dbMap[row.month] = row.depts;
-        });
-        setHeadcountDB(dbMap);
-      }
+        const parsed = histRes.data.map(h => h.data).filter(Boolean)
+          .sort((a, b) => (b.month || "").localeCompare(a.month || ""));
+        
+        const safeParsed = parsed.map(h => ({
+            ...h,
+            rev: h.rev > 1000 ? h.rev / 1_000_000_000 : h.rev,
+            totalOp: h.totalOp > 1000 ? h.totalOp / 1_000_000_000 : h.totalOp
+        }));
+        setHistoryData(safeParsed);
+      } else setHistoryData([]);
+
+      setProdStats(prodRes.data || []);
+      setCrActions(crRes.data || []);
+
+      const dbMap = {};
+      (headRes.data || []).forEach(row => {
+        const m = (row.month || '').substring(0, 7);
+        dbMap[m] = row.depts || [];
+      });
+      setHeadcountDB(dbMap);
+
     } catch (error) {
-      console.error('Error fetching data:', error);
+      console.error('Fetch Error:', error);
     } finally {
       setDataLoading(false);
     }
   };
 
-  // --- [Global Save Logic (Cloud Sync)] ---
-  const handleGlobalSave = async () => {
+  const availableMonths = useMemo(() => {
+    const set = new Set();
+    (historyData || []).forEach(h => h?.month && set.add(h.month));
+    (reactorLogs || []).forEach(l => l?.month && set.add(String(l.month).slice(0, 7)));
+    if (workMonth) set.add(workMonth);
+    return Array.from(set).sort((a, b) => b.localeCompare(a));
+  }, [historyData, reactorLogs, workMonth]);
+
+  // --- Handlers ---
+
+  const handleMonthChange = useCallback((val) => {
+    if (!val) return;
+    setWorkMonth(val);
+    localStorage.setItem('sunchem_current_month', val);
+    setPnlData(prev => calculatePnlFromLogs(prev, reactorLogs, val));
+  }, [calculatePnlFromLogs, reactorLogs]);
+
+  const handleCreateMonth = useCallback(() => {
+    const val = prompt('YYYY-MM:', workMonth);
+    if (val && /^\d{4}-\d{2}$/.test(val)) handleMonthChange(val);
+  }, [workMonth, handleMonthChange]);
+
+  // [Changed] Delete Month Feature (Password Protected)
+  const handleDeleteMonth = useCallback(async () => {
+    // 1. 비밀번호 확인
+    const input = window.prompt("데이터를 영구 삭제하려면 관리자 비밀번호를 입력하세요:");
+    if (input === null) return; // 취소 누름
+    if (input !== ADMIN_PASSWORD) {
+      alert("비밀번호가 올바르지 않습니다.");
+      return;
+    }
+
+    // 2. 재확인
+    if (!window.confirm(`[최종 경고] ${workMonth}월의 모든 데이터를 정말로 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.`)) return;
+
+    setIsDeleting(true);
+    try {
+      const targetMonth = workMonth;
+
+      // Supabase Delete
+      await Promise.all([
+        supabase.from('reactor_logs').delete().eq('month', targetMonth),
+        supabase.from('prod_stats').delete().eq('month', targetMonth),
+        supabase.from('headcount_db').delete().eq('month', targetMonth),
+        supabase.from('history_archive').delete().eq('month', targetMonth),
+      ]);
+
+      // Local State Update
+      setReactorLogs(prev => prev.filter(l => l.month !== targetMonth));
+      setProdStats(prev => prev.filter(p => p.month !== targetMonth));
+      setHistoryData(prev => prev.filter(h => h.month !== targetMonth));
+      setHeadcountDB(prev => {
+        const next = { ...prev };
+        delete next[targetMonth];
+        return next;
+      });
+
+      // P&L View Reset (해당 월 로그가 지워졌으므로 매출 초기화)
+      setPnlData(prev => prev.map(row => ({ ...row, rev: 0 })));
+
+      setNotifications(prev => [{ id: Date.now(), type: 'success', msg: `${targetMonth} Data Deleted.` }, ...prev]);
+      alert(`${targetMonth}월 데이터가 안전하게 삭제되었습니다.`);
+
+    } catch (e) {
+      console.error("Delete Error", e);
+      alert("삭제 중 오류가 발생했습니다: " + e.message);
+    } finally {
+      setIsDeleting(false);
+    }
+  }, [workMonth]);
+
+
+  const handleReactorLogUpdate = useCallback((logEntry) => {
+    if (!logEntry) return;
+
+    let nextLogs = [];
+    setReactorLogs(prev => {
+      const filtered = prev.filter(l => !(l.reactor_id === logEntry.reactor_id && l.month === logEntry.month));
+      nextLogs = [...filtered, logEntry];
+      return nextLogs;
+    });
+
+    if (String(logEntry.month).slice(0, 7) === workMonth) {
+      setPnlData(prev => calculatePnlFromLogs(prev, nextLogs, workMonth));
+      setNotifications(prev => [{ id: Date.now(), type: 'info', msg: 'P&L Synced with Factory Log' }, ...prev]);
+    }
+  }, [workMonth, calculatePnlFromLogs]);
+
+  const handleLayoutUpdate = useCallback((newLayout) => {
+    setReactorConfig(newLayout);
+  }, []);
+
+  const handlePnlChange = useCallback((id, field, value) => {
+    const val = safeNum(value);
+    setPnlData(prev => prev.map(r => r.id === id ? { ...r, [field]: val } : r));
+  }, []);
+
+  const handleProdStatsUpdate = useCallback((s) => setProdStats(s), []);
+  const handleCrActionsUpdate = useCallback((a) => setCrActions(a), []);
+  const handleHeadcountChange = useCallback((m, d) => setHeadcountDB(prev => ({...prev, [m]: d})), []);
+
+  const handleArchiveDelete = useCallback(async (m) => {
+    if (!window.confirm(`Delete ${m}?`)) return;
+    try {
+      await supabase.from('history_archive').delete().eq('month', m);
+      await supabase.from('prod_stats').delete().eq('month', m);
+      setHistoryData(p => p.filter(h => h.month !== m));
+      setProdStats(p => p.filter(p => p.month !== m));
+    } catch(e) { alert("Fail"); }
+  }, []);
+
+  const handleSaveToArchive = useCallback(async (monthName) => {
+    if (!monthName) return alert("Select Month");
+    try {
+      const newEntryData = {
+        month: monthName, status: 'Closed', totalOp: 0, rev: 0, fixed: 0, ratio: 0,
+        bu_data: pnlData, cost_details: []
+      };
+      const { error } = await supabase.from('history_archive').upsert({ month: monthName, data: newEntryData });
+      if (error) throw error;
+      setHistoryData(prev => [newEntryData, ...prev.filter(h => h.month !== monthName)].sort((a,b)=>b.month.localeCompare(a.month)));
+      alert("Archived.");
+    } catch (e) { alert("Archive Failed"); }
+  }, [pnlData]);
+
+  // --- Global Save ---
+  const handleGlobalSave = useCallback(async () => {
     if (isSaving) return;
     setIsSaving(true);
 
     try {
-      const promises = [];
+      const results = [];
+      const pnlPromise = Promise.all(pnlData.map(row => supabase.from('pnl_data').update(row).eq('id', row.id)));
+      results.push({ name: 'P&L', promise: pnlPromise });
 
-      // 1. P&L Update
-      pnlData.forEach(row => {
-        promises.push(supabase.from('pnl_data').update(row).eq('id', row.id));
-      });
-
-      // 2. Prod Stats Update
-      if (prodStats.length > 0) {
-        promises.push(supabase.from('prod_stats').upsert(prodStats));
+      if (reactorLogs.length) results.push({ name: 'ReactorLogs', promise: supabase.from('reactor_logs').upsert(reactorLogs, { onConflict: 'reactor_id, month' }) });
+      if (reactorConfig.length) {
+        const cleanConf = reactorConfig.map(({ id, name, type, capacity, x_pos, y_pos }) => ({
+           id: typeof id === 'number' ? id : undefined, name, type, capacity, x_pos, y_pos
+        }));
+        results.push({ name: 'ReactorConfig', promise: supabase.from('reactor_config').upsert(cleanConf) });
       }
+      if (prodStats.length) results.push({ name: 'ProdStats', promise: supabase.from('prod_stats').upsert(prodStats) });
+      if (crActions.length) results.push({ name: 'CrActions', promise: supabase.from('cr_actions').upsert(crActions) });
+      
+      const hcPromises = Object.keys(headcountDB).map(m => supabase.from('headcount_db').upsert({ month: m, depts: headcountDB[m] }));
+      if(hcPromises.length) results.push({ name: 'Headcount', promise: Promise.all(hcPromises) });
 
-      // 3. CR Actions Update
-      if (crActions.length > 0) {
-        promises.push(supabase.from('cr_actions').upsert(crActions));
+      const outcomes = await Promise.allSettled(results.map(r => r.promise));
+      
+      const failed = [];
+      outcomes.forEach((res, idx) => { if (res.status === 'rejected') failed.push(results[idx].name); });
+
+      if (failed.length > 0) {
+        alert(`저장 실패: ${failed.join(', ')}`);
+      } else {
+        const { data: refreshedConfig } = await supabase.from('reactor_config').select('*').order('id');
+        if (refreshedConfig) setReactorConfig(refreshedConfig);
+        
+        setNotifications(prev => [{ id: Date.now(), type: 'success', msg: 'Saved to Supabase.' }, ...prev]);
       }
-
-      // 4. Headcount Update
-      Object.keys(headcountDB).forEach(month => {
-        promises.push(supabase.from('headcount_db').upsert({ month, depts: headcountDB[month] }));
-      });
-
-      await Promise.all(promises);
-
-      const newNoti = { id: Date.now(), type: 'success', msg: 'Saved successfully to Cloud.' };
-      setNotifications(prev => [newNoti, ...prev]);
-      setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== newNoti.id)), 3000);
-
     } catch (error) {
-      console.error("Global Save Error:", error);
-      alert("Error saving data.");
+      console.error("Save Error:", error);
+      alert("Save Failed.");
     } finally {
       setTimeout(() => setIsSaving(false), 500);
     }
-  };
+  }, [isSaving, pnlData, reactorLogs, reactorConfig, prodStats, crActions, headcountDB]);
 
-  // [Keyboard Shortcut Listener (Ctrl + S)]
+  // Search Logic (Debounced)
   useEffect(() => {
-    const handleKeyDown = (event) => {
-      if ((event.ctrlKey || event.metaKey) && event.key === 's') {
-        event.preventDefault(); 
-        handleGlobalSave();
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [pnlData, prodStats, crActions, headcountDB]);
+    const timer = setTimeout(() => {
+      const q = searchQuery.toLowerCase().trim();
+      if (!q) { setSearchResults([]); return; }
+      
+      const res = [];
+      pnlData.forEach(b => { if ((b.name||'').toLowerCase().includes(q)) res.push({ type: 'Biz', label: b.name, detail: `Rev: ${b.rev}`, tab: 'chapter0' }); });
+      crActions.forEach(a => { if ((a.item||'').toLowerCase().includes(q)) res.push({ type: 'Cost Save', label: a.item, detail: a.status, tab: 'chapter4' }); });
+      reactorConfig.forEach(r => { if ((r.name||'').toLowerCase().includes(q)) res.push({ type: 'Facility', label: r.name, detail: r.type, tab: 'chapter7' }); });
+      setSearchResults(res);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery, pnlData, crActions, reactorConfig]);
 
-
-  // --- [Search & Notification Logic] ---
+  // Keydown
   useEffect(() => {
-    if (searchQuery.trim() === '') {
-      setSearchResults([]);
-      return;
-    }
-    const query = searchQuery.toLowerCase();
-    const results = [];
-    pnlData.forEach(bu => {
-      if (bu.name.toLowerCase().includes(query)) results.push({ type: 'Business', label: bu.name, detail: `Revenue: ${bu.rev}B`, tab: 'chapter0' });
-    });
-    crActions.forEach(action => {
-      if (action.item.toLowerCase().includes(query)) results.push({ type: 'Cost Save', label: action.item, detail: `${action.status}`, tab: 'chapter3' });
-    });
-    setSearchResults(results);
-  }, [searchQuery, pnlData, crActions]);
+    const k = (e) => { if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); handleGlobalSave(); } };
+    window.addEventListener('keydown', k);
+    return () => window.removeEventListener('keydown', k);
+  }, [handleGlobalSave]);
 
-  // --- [Handlers] ---
-  const handleLogout = async () => { await supabase.auth.signOut(); };
+  const handleLogout = useCallback(() => supabase.auth.signOut(), []);
   
-  // Data Handlers
-  const handlePnlChange = async (id, field, value) => {
-    const numValue = value === '' ? 0 : parseFloat(value);
-    const updatedData = pnlData.map(row => {
-      if (row.id !== id) return row;
-      let newRow = { ...row, [field]: numValue };
-      if (field === 'rev') newRow.gm = numValue * (row.rev > 0 ? row.gm / row.rev : 0);
-      return newRow;
-    });
-    setPnlData(updatedData);
-    await supabase.from('pnl_data').update(updatedData.find(r => r.id === id)).eq('id', id);
-  };
-
-  const handleSaveToArchive = async (monthName) => {
-    if (!monthName) return alert("Select Month");
-    const totalRev = pnlData.reduce((acc, cur) => acc + cur.rev, 0);
-    const totalGm = pnlData.reduce((acc, cur) => acc + cur.gm, 0);
-    const totalFixed = pnlData.reduce((acc, cur) => acc + cur.fixed, 0);
-    const totalOp = totalGm - totalFixed;
-    const ratio = totalRev > 0 ? (totalFixed / totalRev) * 100 : 0;
-    const newEntryData = { 
-        month: monthName, status: 'Closed', totalOp, rev: totalRev, fixed: totalFixed, ratio, 
-        bu_data: pnlData, 
-        cost_details: [] 
-    };
-    const { error } = await supabase.from('history_archive').upsert({ month: monthName, data: newEntryData });
-    if (!error) {
-      alert(`${monthName} Archived.`);
-      setHistoryData(prev => {
-        const filtered = prev.filter(h => h.month !== monthName);
-        return [newEntryData, ...filtered].sort((a, b) => b.month.localeCompare(a.month));
-      });
-    }
-  };
-
-  const handleHeadcountChange = async (month, updatedDepts) => {
-    setHeadcountDB(prev => ({ ...prev, [month]: updatedDepts }));
-    await supabase.from('headcount_db').upsert({ month: month, depts: updatedDepts });
-  };
-  const handleProdStatsUpdate = async (newStatsArray) => {
-    setProdStats(newStatsArray);
-    await supabase.from('prod_stats').upsert(newStatsArray);
-  };
-  const handleCrActionsUpdate = async (newActions) => {
-    setCrActions(newActions);
-  };
-  
-  const handleMenuClick = (tab) => {
-    setActiveTab(tab);
-    if (window.innerWidth < 1024) setIsMenuOpen(false);
+  const handleMenuClick = useCallback((t) => { 
+    setActiveTab(t); 
+    if(window.innerWidth<1024) setIsMenuOpen(false);
     setSearchQuery(''); setSearchResults([]); setIsSearchFocused(false);
-  };
-  
-  const handleSearchResultClick = (tab) => {
-      handleMenuClick(tab);
-  };
+  }, []);
 
-  if (authLoading) return <div className="min-h-screen flex items-center justify-center bg-slate-50"><Loader2 className="animate-spin text-indigo-500" size={32}/></div>;
+  if (authLoading) return <div className="min-h-screen flex items-center justify-center"><Loader2 className="animate-spin"/></div>;
   if (!session) return <Login />;
 
   const renderContent = () => {
-    if (dataLoading) return <div className="flex h-[calc(100vh-200px)] items-center justify-center flex-col gap-4"><Loader2 className="animate-spin text-blue-600" size={48}/><p className="text-slate-500 font-medium">Loading Data...</p></div>;
+    if (dataLoading) return <div className="h-96 flex items-center justify-center"><Loader2 className="animate-spin mr-2"/>Syncing DB...</div>;
+    
+    const commonProps = { pnlData, historyData, prodStats, headcountDB, selectedMonth: workMonth, onMonthChange: handleMonthChange };
+
     switch (activeTab) {
-      case 'chapter0': return <Chapter0_Executive pnlData={pnlData} onPnlChange={handlePnlChange} historyData={historyData} onSaveArchive={handleSaveToArchive} />;
-      case 'chapter1': return <Chapter1_FixedCost pnlData={pnlData} historyData={historyData} />;
-      case 'chapter2': return <Chapter2_Production historyData={historyData} pnlData={pnlData} prodStats={prodStats} onUpdateStats={handleProdStatsUpdate} />;
-      case 'chapter3': return <Chapter3_CostReduction actions={crActions} onUpdateActions={handleCrActionsUpdate} />;
-      case 'chapter4': return <Chapter4_Headcount pnlData={pnlData} headcountDB={headcountDB} onHeadcountUpdate={handleHeadcountChange} prodStats={prodStats} historyData={historyData} />;
-      case 'chapter5': 
-        const latestMonth = Object.keys(headcountDB).sort().pop() || '2024-12';
-        return <Chapter5_ActionTracker pnlData={pnlData} prodStats={prodStats} crActions={crActions} depts={headcountDB[latestMonth]} />;
-      // [추가] Chapter 6 렌더링 연결
-      case 'chapter6':
-  return (
-    <Chapter6_AI_Insights 
-      pnlData={pnlData} 
-      prodStats={prodStats} 
-      historyData={historyData} // [추가] 과거 실적 데이터 전달
-      headcountDB={headcountDB} // [추가] 인력 데이터 전달
-    />
-  );
+      case 'chapter0': return <MemoChapter0 {...commonProps} reactorLogs={reactorLogs} reactorConfig={reactorConfig} onPnlChange={handlePnlChange} onSaveArchive={handleSaveToArchive} onDeleteArchive={handleArchiveDelete}/>;
+      case 'chapter1': return <MemoChapter1 {...commonProps} />;
+      case 'chapter2': return <MemoChapter2 {...commonProps} />;
+      case 'chapter3': return <MemoChapter3 {...commonProps} onUpdateStats={handleProdStatsUpdate} />;
+      case 'chapter4': return <MemoChapter4 actions={crActions} onUpdateActions={handleCrActionsUpdate} />;
+      case 'chapter5': return <MemoChapter5 {...commonProps} onHeadcountUpdate={handleHeadcountChange} />;
+      case 'chapter6': return <MemoChapter6 {...commonProps} crActions={crActions} depts={headcountDB[workMonth] || []} />;
+      case 'chapter7': return <MemoChapter7 reactorConfig={reactorConfig} reactorLogs={reactorLogs} onUpdateLayout={handleLayoutUpdate} onUpdateLog={handleReactorLogUpdate} selectedMonth={workMonth} onMonthChange={handleMonthChange} historyData={historyData} />;
       default: return null;
     }
   };
 
-  const headerTitle = {
-    chapter0: 'Executive Dashboard', chapter1: 'Fixed Cost Management', chapter2: 'Production & Sales',
-    chapter3: 'Cost Reduction', chapter4: 'HR Management', chapter5: 'Action Tracker',
-    chapter6: 'AI & Prediction Analysis' // [추가] 헤더 타이틀
-  }[activeTab];
-
   return (
     <div className="min-h-screen bg-slate-50/50 font-sans text-slate-900 flex overflow-hidden" onClick={() => { setIsSearchFocused(false); setShowNotifications(false); }}>
+      {isMenuOpen && <div className="fixed inset-0 bg-black/50 z-20 lg:hidden" onClick={() => setIsMenuOpen(false)} />}
       
-      {/* [Mobile Overlay] */}
-      {isMenuOpen && (
-        <div 
-          className="fixed inset-0 bg-black/50 z-20 lg:hidden backdrop-blur-sm"
-          onClick={() => setIsMenuOpen(false)}
-        />
-      )}
-
-      {/* [Sidebar] Responsive Drawer */}
-      <div className={`
-        fixed inset-y-0 left-0 z-30 bg-slate-900 border-r border-slate-800 transition-all duration-300 ease-in-out shadow-2xl flex flex-col
-        ${isMenuOpen ? 'translate-x-0 w-64' : '-translate-x-full lg:translate-x-0 lg:w-20'} 
-        lg:static lg:flex-shrink-0
-      `} onClick={e => e.stopPropagation()}>
-        
-        {/* Sidebar Header */}
-        <div className="h-16 flex items-center justify-between px-4 lg:px-6 border-b border-slate-800/50 bg-slate-900 shrink-0">
-          <div className={`flex items-center gap-3 text-white ${!isMenuOpen && 'lg:mx-auto'}`}>
-            <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center shadow-lg shadow-blue-900/50 shrink-0">
-               <span className="text-white font-bold text-lg leading-none">I</span>
+      {/* Sidebar */}
+      <div className={`fixed inset-y-0 left-0 z-30 bg-slate-900 border-r border-slate-800 transition-all duration-300 flex flex-col ${isMenuOpen ? 'translate-x-0 w-64' : '-translate-x-full lg:translate-x-0 lg:w-20'} lg:static`} onClick={e=>e.stopPropagation()}>
+         <div className="h-16 flex items-center px-4 bg-slate-900 text-white gap-3 border-b border-slate-800">
+           <div className="w-8 h-8 bg-blue-600 rounded flex items-center justify-center font-bold">I</div>
+           {isMenuOpen && <div><span className="font-bold block">SUNCHEM</span><span className="text-[10px] text-blue-400">Global Ops</span></div>}
+         </div>
+         <nav className="flex-1 py-4 px-2 space-y-1 overflow-y-auto scrollbar-hide">
+            <MenuHeading isOpen={isMenuOpen} text="Overview"/>
+            <MenuButton active={activeTab==='chapter0'} onClick={()=>handleMenuClick('chapter0')} icon={<BarChart3 size={20}/>} label="1. 경영 요약" isOpen={isMenuOpen}/>
+            <MenuButton active={activeTab==='chapter1'} onClick={()=>handleMenuClick('chapter1')} icon={<BrainCircuit size={20}/>} label="2. AI 예측" isOpen={isMenuOpen}/>
+            <div className="border-t border-slate-800 my-2 mx-2"></div>
+            <MenuHeading isOpen={isMenuOpen} text="Operations"/>
+            <MenuButton active={activeTab==='chapter2'} onClick={()=>handleMenuClick('chapter2')} icon={<LayoutDashboard size={20}/>} label="3. 고정비 관리" isOpen={isMenuOpen}/>
+            <MenuButton active={activeTab==='chapter3'} onClick={()=>handleMenuClick('chapter3')} icon={<Factory size={20}/>} label="4. 생산·매출" isOpen={isMenuOpen}/>
+            <MenuButton active={activeTab==='chapter4'} onClick={()=>handleMenuClick('chapter4')} icon={<TrendingDown size={20}/>} label="5. 원가절감" isOpen={isMenuOpen}/>
+            <div className="border-t border-slate-800 my-2 mx-2"></div>
+            <MenuHeading isOpen={isMenuOpen} text="Organization"/>
+            <MenuButton active={activeTab==='chapter5'} onClick={()=>handleMenuClick('chapter5')} icon={<Users size={20}/>} label="6. 인력 관리" isOpen={isMenuOpen}/>
+            <MenuButton active={activeTab==='chapter6'} onClick={()=>handleMenuClick('chapter6')} icon={<ClipboardList size={20}/>} label="7. 액션 트래커" isOpen={isMenuOpen}/>
+            <MenuButton active={activeTab==='chapter7'} onClick={()=>handleMenuClick('chapter7')} icon={<Factory size={20}/>} label="8. 월간 생산 아웃풋" isOpen={isMenuOpen}/>
+         </nav>
+         <div className="p-4 border-t border-slate-800">
+            <div className="flex items-center gap-3 justify-center text-slate-400 hover:text-white cursor-pointer" onClick={handleLogout}>
+              <LogOut size={20}/> {isMenuOpen && <span className="text-sm">Logout</span>}
             </div>
-            <div className={`overflow-hidden transition-all duration-300 ${!isMenuOpen ? 'lg:w-0 lg:opacity-0 lg:hidden' : 'block'}`}>
-               <span className="block font-bold text-lg tracking-tight leading-none text-slate-100">SUNCHEM</span>
-               <span className="text-[10px] font-medium text-blue-400 tracking-widest uppercase">Global Ops</span>
-            </div>
-          </div>
-          <button onClick={() => setIsMenuOpen(false)} className="lg:hidden text-slate-400 hover:text-white p-1 rounded hover:bg-slate-800">
-             <X size={24} />
-          </button>
-        </div>
-
-        {/* Navigation */}
-        <nav className="flex-1 py-6 px-3 space-y-1 overflow-y-auto scrollbar-hide">
-          <MenuHeading isOpen={isMenuOpen} text="Overview" />
-          <MenuButton active={activeTab === 'chapter0'} onClick={() => handleMenuClick('chapter0')} icon={<BarChart3 size={20} />} label="1. 경영 요약" isOpen={isMenuOpen} />
-          <div className="my-2 border-t border-slate-800/50 mx-2"></div>
-          <MenuHeading isOpen={isMenuOpen} text="Operations" />
-          <MenuButton active={activeTab === 'chapter1'} onClick={() => handleMenuClick('chapter1')} icon={<LayoutDashboard size={20} />} label="2. 고정비 관리" isOpen={isMenuOpen} />
-          <MenuButton active={activeTab === 'chapter2'} onClick={() => handleMenuClick('chapter2')} icon={<Factory size={20} />} label="3. 생산·매출" isOpen={isMenuOpen} />
-          <MenuButton active={activeTab === 'chapter3'} onClick={() => handleMenuClick('chapter3')} icon={<TrendingDown size={20} />} label="4. 원가절감" isOpen={isMenuOpen} />
-          <div className="my-2 border-t border-slate-800/50 mx-2"></div>
-          <MenuHeading isOpen={isMenuOpen} text="Organization" />
-          <MenuButton active={activeTab === 'chapter4'} onClick={() => handleMenuClick('chapter4')} icon={<Users size={20} />} label="5. 인력 관리" isOpen={isMenuOpen} />
-          <MenuButton active={activeTab === 'chapter5'} onClick={() => handleMenuClick('chapter5')} icon={<ClipboardList size={20} />} label="6. 액션 트래커" isOpen={isMenuOpen} />
-          
-          {/* [추가] Chapter 6 메뉴 버튼 */}
-          <div className="my-2 border-t border-slate-800/50 mx-2"></div>
-          <MenuHeading isOpen={isMenuOpen} text="Future Intelligence" />
-          <MenuButton active={activeTab === 'chapter6'} onClick={() => handleMenuClick('chapter6')} icon={<BrainCircuit size={20} />} label="7. AI & 예측 분석" isOpen={isMenuOpen} />
-        </nav>
-
-        {/* User Profile */}
-        <div className="p-4 border-t border-slate-800 mx-2 mb-2 shrink-0">
-           <div className={`flex items-center gap-3 p-2 rounded-lg transition-colors ${isMenuOpen ? 'bg-slate-800/50 hover:bg-slate-800' : 'justify-center'}`}>
-             <div className="w-9 h-9 rounded-full bg-indigo-600 flex items-center justify-center text-white font-bold text-sm border border-slate-600 shrink-0">
-                {session.user.email[0].toUpperCase()}
-             </div>
-             {isMenuOpen && (
-                 <div className="overflow-hidden flex-1 min-w-0">
-                     <p className="text-sm font-bold text-slate-200 truncate">{session.user.email.split('@')[0]}</p>
-                     <p className="text-xs text-slate-500 truncate">Administrator</p>
-                 </div>
-             )}
-             {isMenuOpen && <button onClick={handleLogout} className="text-slate-500 hover:text-red-400 transition ml-auto" title="Logout"><LogOut size={16}/></button>}
-           </div>
-        </div>
+         </div>
       </div>
 
-      {/* Main Content Area */}
-      <div className="flex-1 flex flex-col h-screen overflow-hidden relative bg-[#F8FAFC]">
-        {/* Header */}
-        <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-4 lg:px-8 z-20 sticky top-0 shadow-sm shrink-0" onClick={e => e.stopPropagation()}>
-          <div className="flex items-center gap-3">
-             <button onClick={() => setIsMenuOpen(!isMenuOpen)} className="text-slate-500 hover:text-slate-700 lg:hidden">
-               <Menu size={24} />
-             </button>
-             <button onClick={() => setIsMenuOpen(!isMenuOpen)} className="hidden lg:block text-slate-400 hover:text-slate-600 mr-2">
-               <Menu size={20} />
-             </button>
+      {/* Main Content */}
+      <div className="flex-1 flex flex-col h-screen overflow-hidden">
+         <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-6 shrink-0" onClick={e=>e.stopPropagation()}>
+            <div className="flex items-center gap-4">
+               <button onClick={()=>setIsMenuOpen(!isMenuOpen)} className="lg:hidden"><Menu/></button>
+               <h2 className="font-bold text-lg">Executive Dashboard</h2>
+            </div>
+            <div className="flex items-center gap-3">
+               
+               {/* Month Controls with Delete Feature */}
+               <div className="hidden md:flex items-center gap-2">
+                 <select value={workMonth} onChange={(e)=>handleMonthChange(e.target.value)} className="bg-slate-50 border rounded px-2 py-1 text-sm font-bold">
+                    {availableMonths.map(m=><option key={m} value={m}>{m}</option>)}
+                 </select>
+                 <button onClick={handleCreateMonth} className="p-1 border rounded hover:bg-slate-50" title="Create New Month"><Plus size={16}/></button>
+                 
+                 {/* Delete Month Button */}
+                 <button 
+                   onClick={handleDeleteMonth} 
+                   disabled={isDeleting}
+                   className="p-1 border rounded hover:bg-red-50 text-slate-400 hover:text-red-500 transition-colors ml-1" 
+                   title="Delete Selected Month Data"
+                 >
+                   {isDeleting ? <Loader2 size={16} className="animate-spin text-red-500"/> : <Trash2 size={16}/>}
+                 </button>
+               </div>
 
-             <div>
-               <h2 className="text-lg lg:text-xl font-bold text-slate-800 flex items-center gap-2 tracking-tight truncate max-w-[200px] sm:max-w-none">
-                 {headerTitle}
-               </h2>
-               <p className="text-[10px] lg:text-xs font-medium text-slate-500 hidden sm:block">SUNCHEM Global Operations System</p>
-             </div>
-          </div>
-          
-          <div className="flex items-center gap-2 lg:gap-4">
-             {/* Save Button */}
-             <button 
-                onClick={handleGlobalSave}
-                disabled={isSaving}
-                className={`flex items-center gap-2 px-3 py-2 rounded-lg border transition-all ${isSaving ? 'bg-green-50 border-green-200 text-green-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50 hover:border-blue-300 hover:text-blue-600'}`}
-                title="Save all changes to Cloud (Ctrl+S)"
-             >
-                {isSaving ? <Loader2 size={18} className="animate-spin"/> : <Cloud size={18} />}
-                <span className="text-xs font-bold hidden md:inline">{isSaving ? 'Saving...' : 'Save'}</span>
-             </button>
-
-             {/* Search Input (Desktop) */}
-             <div className="hidden md:block relative w-48 lg:w-64">
-                <div className="flex items-center bg-slate-100 rounded-lg px-3 py-2 border border-slate-200 focus-within:border-blue-500 focus-within:ring-1 focus-within:ring-blue-500 transition-all">
-                  <Search size={16} className="text-slate-400 mr-2"/>
-                  <input 
-                    type="text" 
-                    placeholder="Search..." 
-                    className="bg-transparent border-none text-sm w-full focus:outline-none text-slate-700 placeholder-slate-400"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    onFocus={() => setIsSearchFocused(true)}
-                  />
-                  {searchQuery && (
-                    <button onClick={() => { setSearchQuery(''); setSearchResults([]); }} className="text-slate-400 hover:text-slate-600">
-                      <X size={14} />
-                    </button>
-                  )}
-                </div>
-                {isSearchFocused && searchQuery && (
-                  <div className="absolute top-full left-0 right-0 mt-2 bg-white rounded-lg shadow-xl border border-slate-100 overflow-hidden z-50 animate-fade-in-up max-h-80 overflow-y-auto">
-                    {searchResults.length > 0 ? (
-                      searchResults.map((result, idx) => (
-                        <div key={idx} className="px-4 py-3 hover:bg-blue-50 cursor-pointer border-b border-slate-50 last:border-none flex items-center justify-between group" onClick={() => handleSearchResultClick(result.tab)}>
-                          <div>
-                            <div className="flex items-center gap-2 mb-1">
-                              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded text-white ${result.type === 'Business' ? 'bg-blue-500' : result.type === 'Cost Save' ? 'bg-purple-500' : 'bg-emerald-500'}`}>{result.type}</span>
-                              <span className="text-sm font-bold text-slate-800">{result.label}</span>
+               <button onClick={handleGlobalSave} disabled={isSaving} className={`flex items-center gap-2 px-3 py-1.5 rounded text-sm font-bold border transition ${isSaving ? 'bg-green-50 text-green-700' : 'bg-white hover:bg-slate-50'}`}>
+                 {isSaving ? <Loader2 size={16} className="animate-spin"/> : <Cloud size={16}/>} Save
+               </button>
+               
+               {/* Search Bar */}
+               <div className="relative w-48 hidden md:block">
+                  <div className="flex items-center bg-slate-100 rounded px-2 py-1 border focus-within:border-blue-500">
+                     <Search size={14} className="text-slate-400 mr-2"/>
+                     <input type="text" placeholder="Search..." className="bg-transparent text-sm w-full outline-none" value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} onFocus={()=>setIsSearchFocused(true)}/>
+                     {searchQuery && <X size={14} className="cursor-pointer text-slate-400" onClick={()=>{setSearchQuery(''); setSearchResults([]);}}/>}
+                  </div>
+                  {isSearchFocused && searchQuery && (
+                    <div className="absolute top-full left-0 right-0 mt-1 bg-white border rounded shadow-lg max-h-60 overflow-auto z-50">
+                        {searchResults.map((r,i)=>(
+                            <div key={i} className="p-2 hover:bg-slate-50 cursor-pointer text-sm" onClick={()=>handleMenuClick(r.tab)}>
+                                <span className="font-bold mr-2 text-xs bg-slate-200 px-1 rounded">{r.type}</span>
+                                {r.label} <span className="text-xs text-slate-400 ml-1">{r.detail}</span>
                             </div>
-                            <p className="text-xs text-slate-500">{result.detail}</p>
-                          </div>
-                          <ChevronRight size={14} className="text-slate-300 group-hover:text-blue-500"/>
-                        </div>
-                      ))
-                    ) : (<div className="p-4 text-center text-sm text-slate-400">No results found.</div>)}
-                  </div>
-                )}
-             </div>
-
-             <button className="md:hidden p-2 text-slate-500 hover:text-slate-700">
-               <Search size={20}/>
-             </button>
-
-             {/* Notification */}
-             <div className="relative">
-                <button 
-                  className={`p-2 rounded-md transition relative ${showNotifications ? 'bg-blue-50 text-blue-600' : 'hover:bg-slate-100 hover:text-blue-600'}`}
-                  onClick={() => setShowNotifications(!showNotifications)}
-                >
-                  <Bell size={20} />
-                  {notifications.length > 0 && <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full border border-white animate-pulse"></span>}
-                </button>
-                {showNotifications && (
-                  <div className="absolute top-full right-0 mt-3 w-80 bg-white rounded-lg shadow-2xl border border-slate-100 overflow-hidden z-50 animate-fade-in-up">
-                    <div className="px-4 py-3 bg-slate-50 border-b border-slate-100 flex justify-between items-center">
-                      <h3 className="font-bold text-sm text-slate-700">Notifications</h3>
-                      <span className="text-xs font-bold text-blue-600 bg-blue-100 px-2 py-0.5 rounded-full">{notifications.length} New</span>
+                        ))}
                     </div>
-                    <div className="max-h-64 overflow-y-auto">
-                      {notifications.length === 0 ? <div className="p-6 text-center text-sm text-slate-400">알림이 없습니다.</div> : 
-                        notifications.map((noti) => (
-                          <div key={noti.id} className="p-3 border-b border-slate-50 hover:bg-slate-50 flex gap-3">
-                            <div className="mt-1">{noti.type === 'alert' ? <AlertCircle size={16} className="text-red-500"/> : noti.type === 'success' ? <Check size={16} className="text-green-500"/> : <Info size={16} className="text-blue-500"/>}</div>
-                            <div className="flex-1"><p className="text-xs font-bold text-slate-800 mb-0.5">{noti.type === 'alert' ? 'Risk Alert' : noti.type === 'success' ? 'System' : 'Info'}</p><p className="text-xs text-slate-500 leading-snug">{noti.msg}</p></div>
-                          </div>
-                        ))
-                      }
-                    </div>
-                  </div>
-                )}
-             </div>
-          </div>
-        </header>
+                  )}
+               </div>
 
-        <main className="flex-1 overflow-y-auto p-4 lg:p-6 scrollbar-hide relative z-10">
-          <div className="max-w-[1600px] mx-auto space-y-6 pb-20 lg:pb-0">
-            {renderContent()}
-          </div>
-        </main>
+               {/* Notifications */}
+               <div className="relative">
+                  <Bell size={20} className="text-slate-400 cursor-pointer" onClick={()=>setShowNotifications(!showNotifications)}/>
+                  {notifications.length>0 && <span className="absolute top-0 right-0 w-2 h-2 bg-red-500 rounded-full"></span>}
+                  {showNotifications && (
+                    <div className="absolute right-0 top-8 w-72 bg-white shadow-xl border rounded-lg p-2 z-50 max-h-64 overflow-auto">
+                      {notifications.map(n=><div key={n.id} className="text-xs p-2 border-b last:border-0 hover:bg-slate-50">{n.msg}</div>)}
+                    </div>
+                  )}
+               </div>
+            </div>
+         </header>
+         <main className="flex-1 overflow-auto p-6">{renderContent()}</main>
       </div>
     </div>
   );
 };
 
-// --- [Sub Components] ---
-const MenuHeading = ({ isOpen, text }) => (
+const MenuHeading = React.memo(({ isOpen, text }) => (
   <div className={`px-4 pb-2 pt-4 ${!isOpen && 'hidden'}`}>
     <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">{text}</p>
   </div>
-);
+));
 
-const MenuButton = ({ active, onClick, icon, label, isOpen }) => (
-  <button onClick={onClick} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13px] transition-all duration-200 group relative ${active ? 'bg-blue-600 text-white font-semibold shadow-md shadow-blue-900/20' : 'text-slate-400 hover:bg-slate-800 hover:text-white font-medium'}`}>
-    <span className={`shrink-0 ${active ? 'text-white' : 'text-slate-400 group-hover:text-white transition'}`}>{icon}</span>
-    <span className={`whitespace-nowrap flex-1 text-left truncate transition-all duration-300 ${!isOpen ? 'w-0 opacity-0 hidden' : 'w-auto opacity-100 block'}`}>{label}</span>
-    {active && isOpen && <ChevronRight size={14} className="text-blue-300 ml-auto"/>}
+const MenuButton = React.memo(({ active, onClick, icon, label, isOpen }) => (
+  <button onClick={onClick} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13px] transition-all group ${active ? 'bg-blue-600 text-white font-semibold' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}>
+    <span className="shrink-0">{icon}</span>
+    {isOpen && <span className="truncate">{label}</span>}
   </button>
-);
+));
 
 export default App;

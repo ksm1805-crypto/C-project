@@ -1,0 +1,15 @@
+{
+  "projects": {
+    "default": "matflow-v1"
+  },
+  "targets": {
+    "matflow-v1": {
+      "hosting": {
+        "matcore": [
+          "matbrains-matcore"
+        ]
+      }
+    }
+  },
+  "etags": {}
+}

@@ -1,0 +1,19 @@
+{
+  "hosting": [
+    {
+      "target": "matcore", 
+      "public": "dist",  // <-- 본인 프로젝트의 빌드 폴더명 (dist 또는 build)
+      "ignore": [
+        "firebase.json",
+        "**/.*",
+        "**/node_modules/**"
+      ],
+      "rewrites": [
+        {
+          "source": "**",
+          "destination": "/index.html"
+        }
+      ]
+    }
+  ]
+}
