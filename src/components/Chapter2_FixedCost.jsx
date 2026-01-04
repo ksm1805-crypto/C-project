@@ -29,8 +29,8 @@ const autoScale = (val) => {
   return n;
 };
 
-const Chapter2_FixedCost = ({ pnlData, historyData }) => {
-  const [selectedMonth, setSelectedMonth] = useState('2024-12');
+// [수정] selectedMonth를 props로 받아옴 (내부 state 제거)
+const Chapter2_FixedCost = ({ pnlData, historyData, selectedMonth }) => {
   const [costs, setCosts] = useState([]);
   const [allCosts, setAllCosts] = useState([]); 
   const [loading, setLoading] = useState(true);
@@ -43,13 +43,7 @@ const Chapter2_FixedCost = ({ pnlData, historyData }) => {
     type: 'controllable', name: '', price: 0, beforePrice: 0, qty: 1, savingsPlan: '', contribution: '', duration: '', memo: ''
   });
 
-  // --- [Logic] Available Months ---
-  const availableMonths = useMemo(() => {
-    const months = new Set(historyData?.map(h => h.month) || []);
-    // 현재 작업 중인 월이 없으면 추가
-    if (selectedMonth) months.add(selectedMonth);
-    return Array.from(months).sort((a, b) => b.localeCompare(a));
-  }, [historyData, selectedMonth]);
+  // [삭제] availableMonths 로직 제거 (상단 전역 조회 사용)
 
   // --- [Logic] Trend Data: Cumulative Savings (P x Q 반영) ---
   const trendData = useMemo(() => {
@@ -293,20 +287,13 @@ const Chapter2_FixedCost = ({ pnlData, historyData }) => {
 
   return (
     <div className="space-y-6 animate-fade-in pb-10">
-      {/* 1. Header */}
+      {/* 1. Header (조회 월 선택 제거) */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-3">
         <div>
            <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
              <Calendar className="text-indigo-600"/> 월별 고정비 관리
            </h2>
            <p className="text-sm text-slate-500 mt-1">월별 상세 실적 집계 및 예산 통제 (단위: B KRW)</p>
-        </div>
-        <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-sm self-end sm:self-auto">
-           <Filter size={14} className="text-slate-400"/>
-           <span className="text-xs text-slate-500 font-bold">조회 월:</span>
-           <select className="text-sm font-bold text-indigo-600 bg-transparent outline-none cursor-pointer" value={selectedMonth} onChange={(e) => setSelectedMonth(e.target.value)}>
-              {availableMonths.map(m => <option key={m} value={m}>{m}</option>)}
-           </select>
         </div>
       </div>
 

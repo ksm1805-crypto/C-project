@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   ComposedChart, Line, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, BarChart
 } from 'recharts';
@@ -14,30 +14,30 @@ const num = (v) => {
 };
 const toB = (krw) => num(krw) / 1_000_000_000;
 
-// JSON 파싱 에러 방지용 (LocalStorage)
-const safeParse = (key, defaultValue = []) => {
-  try {
-    const item = localStorage.getItem(key);
-    if (!item) return defaultValue;
-    const parsed = JSON.parse(item);
-    return Array.isArray(parsed) ? parsed : defaultValue;
-  } catch (e) {
-    console.error(`JSON Parsing Error [${key}]:`, e);
-    return defaultValue;
-  }
+const normalizeCategory = (c) => {
+  const s = String(c || '').trim();
+  if (!s) return 'Etc';
+  const upper = s.toUpperCase();
+  if (upper === 'OLED' || upper === 'OLED 소재') return 'OLED';
+  if (upper === 'API' || upper === 'API/중간체' || upper === '중간체') return 'API';
+  if (upper === '신사업' || upper === 'NEW' || upper === 'NEW_BIZ') return '신사업';
+  return s; 
 };
 
-const catKey = (c) => {
-  const cat = String(c || 'OLED').toUpperCase();
-  if (cat === 'OLED') return 'OLED';
-  if (cat === 'API') return 'API';
-  return '신사업';
+const getCategoryColor = (cat) => {
+  const upper = String(cat).toUpperCase();
+  if (upper === 'OLED') return 'text-blue-600';
+  if (upper === 'API') return 'text-emerald-600';
+  if (upper === '신사업') return 'text-amber-600';
+  return 'text-purple-600'; 
 };
 
 const toneByCat = (cat) => {
-  if (cat === 'OLED') return 'bg-blue-50 text-blue-700 border-blue-200';
-  if (cat === 'API') return 'bg-emerald-50 text-emerald-700 border-emerald-200';
-  return 'bg-amber-50 text-amber-700 border-amber-200';
+  const upper = String(cat).toUpperCase();
+  if (upper === 'OLED') return 'bg-blue-50 text-blue-700 border-blue-200';
+  if (upper === 'API') return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+  if (upper === '신사업') return 'bg-amber-50 text-amber-700 border-amber-200';
+  return 'bg-purple-50 text-purple-700 border-purple-200';
 };
 
 // --- [Data: Weekly Checklist] ---
@@ -66,31 +66,23 @@ const Modal = ({ open, title, onClose, children }) => {
               <Package size={18} className="text-slate-700" />
               <h3 className="text-sm font-black text-slate-800">{title}</h3>
             </div>
-            <button
-              onClick={onClose}
-              className="p-2 rounded-lg hover:bg-slate-200/60 transition"
-              aria-label="close"
-            >
-              <X size={18} className="text-slate-600" />
-            </button>
+            <button onClick={onClose} className="p-2 rounded-lg hover:bg-slate-200/60 transition"><X size={18} className="text-slate-600" /></button>
           </div>
-          <div className="p-5 max-h-[70vh] overflow-auto">
-            {children}
-          </div>
+          <div className="p-5 max-h-[70vh] overflow-auto">{children}</div>
         </div>
       </div>
     </div>
   );
 };
 
+// 🔥 [핵심] DB 데이터(props)만 사용하여 원본 로직을 재구현
 const Chapter3_Production = ({
   historyData, pnlData, prodStats, onUpdateStats,
-  selectedMonth, onMonthChange
+  selectedMonth, onMonthChange,
+  reactorLogs = [],    // App.jsx에서 내려주는 DB 데이터 (필수)
+  reactorConfig = []   // App.jsx에서 내려주는 DB 데이터 (필수)
 }) => {
   const [tasks, setTasks] = useState(WEEKLY_CHECKLIST);
-
-  // Chapter 7 데이터 로드용 상태
-  const [linkedData, setLinkedData] = useState({});
 
   // 아이템 상세 모달 상태
   const [detailOpen, setDetailOpen] = useState(false);
@@ -98,80 +90,70 @@ const Chapter3_Production = ({
   const [detailBU, setDetailBU] = useState('OLED');
   const [detailRows, setDetailRows] = useState([]);
 
-  // Archive 월 목록
-  const archivedMonths = useMemo(() => {
-    return new Set((historyData || []).map(h => h.month));
-  }, [historyData]);
+  // --- [Logic 1] DB 데이터(reactorLogs)를 가공하여 Linked Data 생성 (LocalStorage 대체) ---
+  const linkedData = useMemo(() => {
+    // 1. 월별로 그룹화하기 위한 맵 초기화
+    const monthlyMap = {};
+    
+    // 현재 총 반응기 수 (가동률 분모용)
+    const totalReactorCount = reactorConfig.length > 0 ? reactorConfig.length : 0;
 
-  // 1) LocalStorage에서 Chapter 7 데이터 불러오기 및 집계
-  useEffect(() => {
-    const loadLinkedData = () => {
-      try {
-        const logs = safeParse('matflow_logs_v2');
-        const reactors = safeParse('matflow_reactors_v2');
-
-        const totalReactorCount = Array.isArray(reactors) ? reactors.length : 0;
-        const monthlyMap = {};
-
-        // 초기화
-        logs.forEach(log => {
-          if (log?.month && !monthlyMap[log.month]) {
-            monthlyMap[log.month] = { utilSum: 0, oled: 0, api: 0, new_biz: 0 };
-          }
-        });
-
-        logs.forEach(log => {
-          const m = log?.month;
-          if (!m || !monthlyMap[m]) return;
-
-          // 가동률 합산
-          if (num(log.utilization) > 0) {
-            monthlyMap[m].utilSum += num(log.utilization);
-          }
-
-          // Batch Count 집계 (1 Item = 1 Batch)
-          if (log.items && Array.isArray(log.items)) {
-            log.items.forEach(item => {
-              const cat = String(item.category || 'OLED').toUpperCase();
-              if (cat === 'OLED') monthlyMap[m].oled += 1;
-              else if (cat === 'API') monthlyMap[m].api += 1;
-              else monthlyMap[m].new_biz += 1;
-            });
-          }
-        });
-
-        // 최종 데이터 포맷팅
-        const formattedData = {};
-        Object.keys(monthlyMap).forEach(key => {
-          const d = monthlyMap[key];
-          const avgUtil = totalReactorCount > 0 ? (d.utilSum / totalReactorCount).toFixed(1) : 0;
-          formattedData[key] = {
-            util: avgUtil,
-            oled: d.oled,
-            api: d.api,
-            new_biz: d.new_biz,
-            hasData: true
-          };
-        });
-
-        setLinkedData(formattedData);
-      } catch (e) {
-        console.error("Failed to load linked data", e);
+    // 2. 로그 데이터 순회하며 집계
+    reactorLogs.forEach(log => {
+      const ym = String(log.month).slice(0, 7);
+      if (!monthlyMap[ym]) {
+        monthlyMap[ym] = { utilSum: 0, totalBatch: 0, breakdown: {} };
       }
-    };
 
-    loadLinkedData();
-    window.addEventListener('storage', loadLinkedData);
-    return () => window.removeEventListener('storage', loadLinkedData);
-  }, []);
+      // 가동률 합산
+      if (num(log.utilization) > 0) {
+        monthlyMap[ym].utilSum += num(log.utilization);
+      }
 
-  // --- Data Merging & Filtering ---
+      // Batch Count 집계 (아이템 개수 = Batch 수)
+      if (Array.isArray(log.items)) {
+        log.items.forEach(item => {
+          // 카테고리 정규화 (OLED, API, 신사업, 기타...)
+          const catName = normalizeCategory(item?.category);
+          
+          if (!monthlyMap[ym].breakdown[catName]) {
+            monthlyMap[ym].breakdown[catName] = 0;
+          }
+          monthlyMap[ym].breakdown[catName] += 1;
+          monthlyMap[ym].totalBatch += 1;
+        });
+      }
+    });
+
+    // 3. 최종 데이터 포맷팅
+    const formatted = {};
+    Object.keys(monthlyMap).forEach(ym => {
+      const d = monthlyMap[ym];
+      // 평균 가동률 계산
+      const avgUtil = totalReactorCount > 0 ? (d.utilSum / totalReactorCount).toFixed(1) : 0;
+      
+      formatted[ym] = {
+        util: avgUtil,
+        totalBatch: d.totalBatch,
+        oled: d.breakdown['OLED'] || 0,
+        api: d.breakdown['API'] || 0,
+        new_biz: d.breakdown['신사업'] || 0,
+        breakdown: d.breakdown, // 상세 내역 보존 (동적 카테고리용)
+        hasData: true
+      };
+    });
+
+    return formatted;
+  }, [reactorLogs, reactorConfig]); 
+
+  // --- [Data Merging] ProdStats(수기/DB) + LinkedData(자동집계) ---
   const mergedData = useMemo(() => {
     const allMonths = new Set([
       ...(prodStats || []).map(d => d.month),
       ...(historyData || []).map(d => d.month),
       ...Object.keys(linkedData)
     ]);
+    if (selectedMonth) allMonths.add(selectedMonth);
 
     const sortedMonths = Array.from(allMonths).filter(Boolean).sort();
 
@@ -179,7 +161,7 @@ const Chapter3_Production = ({
       const stat = (prodStats || []).find(p => p.month === month);
       const linked = linkedData[month];
 
-      // 우선순위: 연동 데이터 > 기존 데이터
+      // 차트 및 KPI용 데이터 (Linked 우선, 없으면 Stat)
       const cleanStat = {
         oled: linked?.hasData ? num(linked.oled) : num(stat?.oled),
         api: linked?.hasData ? num(linked.api) : num(stat?.api),
@@ -194,11 +176,13 @@ const Chapter3_Production = ({
       const fin = (historyData || []).find(h => h.month === month);
       const rev = fin ? num(fin.rev) : 0;
 
-      const totalBatch = cleanStat.oled + cleanStat.api + cleanStat.new_biz;
+      // 전체 Batch 수
+      const totalBatch = linked?.hasData 
+        ? linked.totalBatch 
+        : (cleanStat.oled + cleanStat.api + cleanStat.new_biz);
 
       const otd = totalBatch > 0 ? ((totalBatch - cleanStat.late) / totalBatch) * 100 : 0;
       const defectRate = totalBatch > 0 ? ((cleanStat.defect + cleanStat.rework) / totalBatch) * 100 : 0;
-
       const revPerBatch = totalBatch > 0 ? (rev / totalBatch) : 0;
 
       return {
@@ -209,36 +193,72 @@ const Chapter3_Production = ({
         revPerBatch,
         otd,
         defectRate,
-        isLinked: linked?.hasData
+        isLinked: linked?.hasData,
+        breakdown: linked?.breakdown || {} // 동적 카테고리 정보 전달
       };
     });
 
     return fullData.slice(-6);
-  }, [prodStats, historyData, linkedData]);
+  }, [prodStats, historyData, linkedData, selectedMonth]);
 
-  const currentStat =
-    mergedData.find(d => d.month === selectedMonth) ||
-    (mergedData.length > 0 ? mergedData[mergedData.length - 1] : { isLinked: false });
+  const currentStat = mergedData.find(d => d.month === selectedMonth) || { isLinked: false, breakdown: {} };
 
-  // 사업부별 상세 분석 데이터
+  // --- [Charts Data] 사업부별 상세 분석 ---
   const buAnalysisData = useMemo(() => {
     const safePnl = Array.isArray(pnlData) ? pnlData : [];
-    const oledRev = safePnl.find(p => p.id === 1)?.rev || 0;
-    const apiRev = safePnl.find(p => p.id === 2)?.rev || 0;
-    const newBizRev = safePnl.find(p => p.id === 3)?.rev || 0;
 
-    return [
-      { name: 'OLED', batch: num(currentStat.oled), rev: oledRev },
-      { name: 'API', batch: num(currentStat.api), rev: apiRev },
-      { name: '신사업', batch: num(currentStat.new_biz), rev: newBizRev },
-    ].map(item => ({
-      ...item,
-      eff: item.batch > 0 ? (item.rev / item.batch) : 0
-    }));
+    // Revenue 매칭 함수
+    const findRev = (catName) => {
+        const upper = String(catName).toUpperCase();
+        if (upper === 'OLED') return safePnl.find(p => p.id === 1)?.rev || 0;
+        if (upper === 'API') return safePnl.find(p => p.id === 2)?.rev || 0;
+        if (upper === '신사업' || upper === 'NEW') return safePnl.find(p => p.id === 3)?.rev || 0;
+        // 동적 매칭
+        const found = safePnl.find(p => (p.name || '').toUpperCase().includes(upper));
+        return found ? found.rev : 0;
+    };
+
+    if (currentStat.isLinked && currentStat.breakdown) {
+        // [동적 모드] breakdown의 모든 키를 순회하여 차트 데이터 생성
+        const keys = Object.keys(currentStat.breakdown);
+        const priority = ['OLED', 'API', '신사업'];
+        
+        // 정렬: 주요 3개 먼저
+        keys.sort((a, b) => {
+             const idxA = priority.indexOf(a);
+             const idxB = priority.indexOf(b);
+             if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+             if (idxA !== -1) return -1;
+             if (idxB !== -1) return 1;
+             return a.localeCompare(b);
+        });
+
+        return keys.map(cat => {
+            const batchCount = num(currentStat.breakdown[cat]);
+            const revenue = findRev(cat);
+            return {
+                name: cat,
+                batch: batchCount,
+                rev: revenue,
+                eff: batchCount > 0 ? (revenue / batchCount) : 0
+            };
+        });
+    } else {
+        // [수동 모드 Fallback]
+        return [
+          { name: 'OLED', batch: num(currentStat.oled), rev: findRev('OLED') },
+          { name: 'API', batch: num(currentStat.api), rev: findRev('API') },
+          { name: '신사업', batch: num(currentStat.new_biz), rev: findRev('신사업') },
+        ].map(item => ({
+          ...item,
+          eff: item.batch > 0 ? (item.rev / item.batch) : 0
+        }));
+    }
   }, [pnlData, currentStat]);
 
-  // Input Handler
+  // --- [Handlers] ---
   const handleInputChange = (field, value) => {
+    // Linked 상태일 때는 자동 집계 필드는 수정 불가
     if (currentStat.isLinked && ['util', 'oled', 'api', 'new_biz'].includes(field)) return;
 
     const numVal = value === '' ? 0 : parseFloat(value);
@@ -274,73 +294,91 @@ const Chapter3_Production = ({
   };
 
   const openBatchDetail = (month, bu) => {
-    try {
-      const logs = safeParse('matflow_logs_v2');
-      const monthLogs = logs.filter(l => String(l?.month || '').slice(0, 7) === String(month).slice(0, 7));
+    // LocalStorage가 아닌 reactorLogs(DB props)에서 필터링
+    const monthLogs = reactorLogs.filter(l => String(l?.month || '').slice(0, 7) === String(month).slice(0, 7));
+    const items = [];
 
-      const targetCat = bu; // OLED | API | 신사업
-      const items = [];
+    monthLogs.forEach(log => {
+      if (!Array.isArray(log.items)) return;
+      log.items.forEach(it => {
+        const normalized = normalizeCategory(it.category);
+        if (normalized !== bu) return; 
 
-      monthLogs.forEach(log => {
-        if (!Array.isArray(log.items)) return;
-        log.items.forEach(it => {
-          const c = catKey(it.category);
-          if (c !== targetCat) return;
-          items.push({
-            name: String(it.name || '').trim() || '(No name)',
-            category: c,
-            quantity: num(it.quantity),
-            price: num(it.price),
-            revenueB: toB(num(it.quantity) * num(it.price)),
-            reactor_id: log.reactor_id ?? '-',
-            status: log.status ?? '-',
-          });
+        items.push({
+          name: String(it.name || '').trim() || '(No name)',
+          category: normalized,
+          quantity: num(it.quantity),
+          price: num(it.price),
+          revenueB: toB(num(it.quantity) * num(it.price)),
+          reactor_id: log.reactor_id ?? '-',
+          status: log.status ?? '-',
         });
       });
+    });
 
-      const map = new Map();
-      items.forEach(x => {
-        const key = x.name;
-        const prev = map.get(key);
-        if (!prev) {
-          map.set(key, {
-            name: x.name,
-            category: x.category,
-            batches: 1,
-            qtySum: x.quantity,
-            revenueB: x.revenueB,
-            priceHint: x.price,
-          });
-        } else {
-          map.set(key, {
-            ...prev,
-            batches: prev.batches + 1,
-            qtySum: prev.qtySum + x.quantity,
-            revenueB: prev.revenueB + x.revenueB,
-          });
-        }
+    // 아이템명 기준으로 집계 (동일 제품 합산)
+    const map = new Map();
+    items.forEach(x => {
+      const key = x.name;
+      const prev = map.get(key);
+      if (!prev) {
+        map.set(key, { ...x, batches: 1, qtySum: x.quantity });
+      } else {
+        map.set(key, {
+          ...prev,
+          batches: prev.batches + 1,
+          qtySum: prev.qtySum + x.quantity,
+          revenueB: prev.revenueB + x.revenueB,
+        });
+      }
+    });
+
+    const rows = Array.from(map.values())
+      .map(r => ({
+        ...r,
+        revenueB: Number(r.revenueB.toFixed(4)),
+        qtySum: Number(r.qtySum.toFixed(2)),
+      }))
+      .sort((a, b) => b.revenueB - a.revenueB);
+
+    setDetailMonth(String(month).slice(0, 7));
+    setDetailBU(bu);
+    setDetailRows(rows);
+    setDetailOpen(true);
+  };
+
+  // --- [Logic: Display Items for Batch Card] ---
+  const batchDisplayItems = useMemo(() => {
+    if (currentStat.isLinked) {
+      const breakdown = currentStat.breakdown || {};
+      const keys = Object.keys(breakdown);
+      const priority = ['OLED', 'API', '신사업'];
+      keys.sort((a, b) => {
+        const idxA = priority.indexOf(a);
+        const idxB = priority.indexOf(b);
+        if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+        if (idxA !== -1) return -1;
+        if (idxB !== -1) return 1;
+        return a.localeCompare(b);
       });
 
-      const rows = Array.from(map.values())
-        .map(r => ({
-          ...r,
-          revenueB: Number(r.revenueB.toFixed(4)),
-          qtySum: Number(r.qtySum.toFixed(2)),
-        }))
-        .sort((a, b) => b.revenueB - a.revenueB);
-
-      setDetailMonth(String(month).slice(0, 7));
-      setDetailBU(bu);
-      setDetailRows(rows);
-      setDetailOpen(true);
-    } catch (e) {
-      console.error(e);
-      setDetailMonth(String(month).slice(0, 7));
-      setDetailBU(bu);
-      setDetailRows([]);
-      setDetailOpen(true);
+      return keys.map(key => ({
+        label: key,
+        field: key,
+        val: breakdown[key],
+        color: getCategoryColor(key),
+        bu: key,
+        isDynamic: !priority.includes(key)
+      }));
+    } else {
+      return [
+        { label: 'OLED', field: 'oled', val: currentStat.oled, color: 'text-blue-600', bu: 'OLED' },
+        { label: 'API', field: 'api', val: currentStat.api, color: 'text-emerald-600', bu: 'API' },
+        { label: '신사업', field: 'new_biz', val: currentStat.new_biz, color: 'text-amber-600', bu: '신사업' }
+      ];
     }
-  };
+  }, [currentStat]);
+
 
   return (
     <div className="space-y-6 animate-fade-in pb-10">
@@ -351,44 +389,21 @@ const Chapter3_Production = ({
             <Factory className="text-blue-600" /> 생산·매출 연동 관리
           </h2>
           <p className="text-sm text-slate-500 mt-1">
-            공장 Layout 데이터와 연동되어 생산 지표를 자동으로 모니터링합니다.
+            공장 Layout 데이터(DB)와 연동되어 생산 지표를 자동으로 모니터링합니다.
           </p>
         </div>
       </div>
 
       <div className="space-y-6 animate-fade-in">
-        {/* 1. Month Selector */}
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-white p-4 rounded-lg shadow-sm border border-slate-100 gap-3">
-          <span className="text-sm font-bold text-slate-500 flex items-center gap-2">
-            <Calendar size={16} /> 조회 월 선택 (Archive Only):
-          </span>
-          <div className="flex bg-slate-100 p-1 rounded-lg overflow-x-auto w-full sm:w-auto scrollbar-hide">
-            {mergedData.filter(d => archivedMonths.has(d.month)).map(d => (
-              <button
-                key={d.month}
-                onClick={() => onMonthChange?.(d.month)}
-                className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all whitespace-nowrap flex-1 sm:flex-none text-center ${selectedMonth === d.month
-                  ? 'bg-white text-blue-700 shadow-sm'
-                  : 'text-slate-400 hover:text-slate-600'
-                  }`}
-              >
-                {d.month}
-              </button>
-            ))}
-            {mergedData.filter(d => archivedMonths.has(d.month)).length === 0 && (
-              <span className="text-xs text-slate-400 px-3 py-1">저장된 데이터 없음</span>
-            )}
-          </div>
-        </div>
-
-        {/* 2. Batch Input Section */}
+        
+        {/* KPI Section */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-5">
           {/* 설비 가동률 */}
           <div className={`bg-white p-5 rounded-lg shadow-sm border border-slate-200 group focus-within:ring-2 ring-blue-500 transition-all ${currentStat.isLinked ? 'bg-slate-50' : ''}`}>
             <div className="flex justify-between mb-2">
               <span className="text-xs font-bold text-slate-500 uppercase flex items-center gap-1">
                 설비 가동률
-                {currentStat.isLinked && <LinkIcon size={12} className="text-emerald-500" title="Linked to Factory Layout" />}
+                {currentStat.isLinked && <LinkIcon size={12} className="text-emerald-500" title="Linked to Factory DB" />}
               </span>
               <Activity size={16} className="text-blue-500" />
             </div>
@@ -405,14 +420,14 @@ const Chapter3_Production = ({
             <p className="text-xs text-slate-400 mt-2">Avg. Util of All Reactors</p>
           </div>
 
-          {/* 월 생산 Batch */}
+          {/* 월 생산 Batch (Dynamic Rendering) */}
           <div className={`md:col-span-2 lg:col-span-2 bg-white p-5 rounded-lg shadow-sm border border-slate-200 ${currentStat.isLinked ? 'bg-slate-50' : ''}`}>
             <div className="flex justify-between items-center mb-4">
               <h3 className="font-bold text-slate-700 flex items-center gap-2 text-sm uppercase">
                 <Factory size={16} className="text-blue-500" /> 월 생산 Batch ({selectedMonth})
                 {currentStat.isLinked && (
                   <span className="text-[10px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded flex items-center gap-1">
-                    <LinkIcon size={10} /> 1 Item = 1 Batch
+                    <LinkIcon size={10} /> Live Sync
                   </span>
                 )}
               </h3>
@@ -421,21 +436,20 @@ const Chapter3_Production = ({
               </span>
             </div>
 
-            <div className="grid grid-cols-3 gap-4">
-              {[
-                { label: 'OLED', field: 'oled', val: currentStat.oled, color: 'text-blue-600', bu: 'OLED' },
-                { label: 'API', field: 'api', val: currentStat.api, color: 'text-emerald-600', bu: 'API' },
-                { label: '신사업', field: 'new_biz', val: currentStat.new_biz, color: 'text-amber-600', bu: '신사업' }
-              ].map((item) => (
+            {/* Dynamic Grid based on categories */}
+            <div className={`grid gap-4 ${batchDisplayItems.length > 3 ? 'grid-cols-4' : 'grid-cols-3'}`}>
+              {batchDisplayItems.map((item) => (
                 <div key={item.field} className="flex flex-col">
-                  <label className="text-xs font-bold text-slate-400 mb-1">{item.label}</label>
+                  <label className="text-xs font-bold text-slate-400 mb-1 truncate" title={item.label}>
+                    {item.label}
+                  </label>
 
                   {currentStat.isLinked ? (
                     <button
                       type="button"
                       onClick={() => openBatchDetail(selectedMonth, item.bu)}
-                      className={`w-full text-left text-xl font-black outline-none bg-transparent ${item.color} hover:underline`}
-                      title="클릭하면 해당 월/사업부 아이템 상세가 열립니다"
+                      className={`w-full text-left text-xl font-black outline-none bg-transparent ${item.color} hover:underline truncate`}
+                      title={`${item.label} 상세 보기`}
                     >
                       {item.val || 0}
                     </button>
@@ -450,7 +464,7 @@ const Chapter3_Production = ({
                   )}
 
                   {currentStat.isLinked && (
-                    <span className="mt-1 text-[10px] text-slate-400 font-bold">Click to see items</span>
+                    <span className="mt-1 text-[10px] text-slate-400 font-bold">See items</span>
                   )}
                 </div>
               ))}
@@ -638,18 +652,18 @@ const Chapter3_Production = ({
         <Modal
           open={detailOpen}
           onClose={() => setDetailOpen(false)}
-          title={`${detailMonth} • ${detailBU} 생산 아이템 목록 (Chapter7 logs)`}
+          title={`${detailMonth} • ${detailBU} 생산 아이템 목록 (DB Link)`}
         >
           <div className="flex items-center justify-between gap-2 mb-3">
             <Badge tone={toneByCat(detailBU)}>{detailBU}</Badge>
             <span className="text-[11px] text-slate-400 font-bold">
-              * Batch=아이템건수, qty/rev는 item.quantity/item.price 기반
+              * DB (reactor_logs) 기반 실시간 집계
             </span>
           </div>
 
           {detailRows.length === 0 ? (
             <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 text-slate-500 text-sm font-bold">
-              해당 월/사업부의 아이템 로그가 없습니다. (matflow_logs_v2 확인)
+              해당 월/사업부의 아이템 로그가 없습니다. (Chapter7에서 확인)
             </div>
           ) : (
             <div className="overflow-hidden rounded-xl border border-slate-200">

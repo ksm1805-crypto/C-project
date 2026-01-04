@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { supabase } from '../supabaseClient'; 
 import { 
   Factory, Save, Settings, AlertCircle, 
   CheckCircle2, XCircle, Activity, X, GripVertical, Trash2, Plus, Calendar, Package, BarChart3, MousePointer2, PlusCircle, RotateCcw, Tag, Layers, ChevronDown
@@ -21,12 +22,12 @@ const generateId = () => {
 };
 
 // JSON 파싱 에러 방지
-const safeParse = (key, defaultValue = []) => {
+const safeParse = (key, defaultValue) => {
   try {
     const item = localStorage.getItem(key);
     if (!item) return defaultValue;
     const parsed = JSON.parse(item);
-    return Array.isArray(parsed) ? parsed : defaultValue;
+    return parsed || defaultValue;
   } catch (e) {
     console.error(`JSON Parsing Error [${key}]:`, e);
     return defaultValue;
@@ -38,7 +39,7 @@ const safeParse = (key, defaultValue = []) => {
 const BU_CATEGORIES = [
   { id: 'OLED', label: 'OLED 소재', color: 'bg-blue-100 text-blue-700 border-blue-200' },
   { id: 'API', label: 'API/중간체', color: 'bg-emerald-100 text-emerald-700 border-emerald-200' },
-  { id: 'NEW_BIZ', label: '신사업', color: 'bg-amber-100 text-amber-700 border-amber-200' }
+  { id: '신사업', label: '신사업', color: 'bg-amber-100 text-amber-700 border-amber-200' }
 ];
 
 const CAPACITY_STYLES = {
@@ -194,24 +195,32 @@ const ReactorNode = React.memo(({
 
 // --- [Main Component] ---
 const Chapter7_ReactorLayout = ({ 
-  reactorConfig = [], 
-  reactorLogs = [],   
+  reactorLogs = [], 
+  reactorConfig = [],
   onUpdateLayout, 
   onUpdateLog, 
-  selectedMonth, 
-  onMonthChange,
-  historyData = [] 
+  selectedMonth 
 }) => {
   const [isEditMode, setIsEditMode] = useState(false);
-  
-  // Local State Initialization
-  const [localReactors, setLocalReactors] = useState(() => {
-    return safeParse('matflow_reactors_v2', Array.isArray(reactorConfig) ? reactorConfig : []);
-  });
-  
-  const [localLogs, setLocalLogs] = useState(() => {
-    return safeParse('matflow_logs_v2', Array.isArray(reactorLogs) ? reactorLogs : []);
-  });
+  const [allReactorsMap, setAllReactorsMap] = useState(() => safeParse('matflow_reactors_monthly_v2', {}));
+  const [currentReactors, setCurrentReactors] = useState([]);
+  const [localLogs, setLocalLogs] = useState(() => safeParse('matflow_logs_v2', Array.isArray(reactorLogs) ? reactorLogs : []));
+  const [isSaving, setIsSaving] = useState(false); 
+
+  useEffect(() => {
+    if (Array.isArray(reactorLogs)) {
+      setLocalLogs(reactorLogs);
+    }
+  }, [reactorLogs]);
+
+  useEffect(() => {
+    if (reactorConfig && reactorConfig.length > 0) {
+        setCurrentReactors(reactorConfig);
+        if (selectedMonth) {
+            setAllReactorsMap(prev => ({ ...prev, [selectedMonth]: reactorConfig }));
+        }
+    }
+  }, [reactorConfig, selectedMonth]);
 
   const [factoryZones, setFactoryZones] = useState(() => {
     const defaultZones = [
@@ -228,26 +237,47 @@ const Chapter7_ReactorLayout = ({
   const [draggingState, setDraggingState] = useState(null); 
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
 
-  // Available Months
-  const availableMonths = useMemo(() => {
-    const monthSet = new Set();
-    if (selectedMonth) monthSet.add(selectedMonth);
-    
-    if (Array.isArray(historyData)) {
-      historyData.forEach(item => { if (item?.month) monthSet.add(item.month); });
-    }
-    if (Array.isArray(localLogs)) {
-      localLogs.forEach(log => { if (log?.month) monthSet.add(log.month); });
-    }
-    return Array.from(monthSet).sort((a, b) => b.localeCompare(a));
-  }, [historyData, localLogs, selectedMonth]);
+  useEffect(() => {
+    if (!selectedMonth) return;
+    if (reactorConfig && reactorConfig.length > 0) return;
 
+    const existingLayout = allReactorsMap[selectedMonth];
 
-  // Persistence
-  useEffect(() => { localStorage.setItem('matflow_reactors_v2', JSON.stringify(localReactors)); }, [localReactors]);
+    if (existingLayout && Array.isArray(existingLayout)) {
+        setCurrentReactors(existingLayout);
+    } else {
+        const sortedMonths = Object.keys(allReactorsMap).sort();
+        const prevMonth = sortedMonths.filter(m => m < selectedMonth).pop();
+
+        if (prevMonth && allReactorsMap[prevMonth]) {
+            const copiedLayout = JSON.parse(JSON.stringify(allReactorsMap[prevMonth]));
+            setCurrentReactors(copiedLayout);
+            
+            setAllReactorsMap(prev => {
+                const updated = { ...prev, [selectedMonth]: copiedLayout };
+                localStorage.setItem('matflow_reactors_monthly_v2', JSON.stringify(updated));
+                return updated;
+            });
+            if (onUpdateLayout) onUpdateLayout(copiedLayout);
+
+        } else {
+            const oldVersion = localStorage.getItem('matflow_reactors_v2');
+            if (oldVersion) {
+                try {
+                    const parsedOld = JSON.parse(oldVersion);
+                    if (Array.isArray(parsedOld)) {
+                        setCurrentReactors(parsedOld);
+                        return; 
+                    }
+                } catch(e) {}
+            }
+            setCurrentReactors([]);
+        }
+    }
+  }, [selectedMonth, allReactorsMap, reactorConfig, onUpdateLayout]);
+
   useEffect(() => { localStorage.setItem('matflow_logs_v2', JSON.stringify(localLogs)); }, [localLogs]);
   useEffect(() => { localStorage.setItem('matflow_zones_v2', JSON.stringify(factoryZones)); }, [factoryZones]);
-
 
   // --- Modal & Calc State ---
   const [editingItems, setEditingItems] = useState([]);
@@ -257,15 +287,17 @@ const Chapter7_ReactorLayout = ({
   useEffect(() => {
     if (selectedReactor) {
       const log = (localLogs || []).find(l => l.reactor_id === selectedReactor.id && l.month === selectedMonth);
-      const items = Array.isArray(log?.items) ? log.items : (log?.product ? [{ 
-        id: generateId(),
-        category: 'OLED', 
-        name: log.product,
-        startDate: `${selectedMonth}-01`,
-        endDate: `${selectedMonth}-28`,
-        quantity: 0,
-        price: 0
-      }] : []);
+      
+      let items = [];
+      if (Array.isArray(log?.items) && log.items.length > 0) {
+          items = log.items.map(item => ({ ...item, id: item.id || generateId() }));
+      } else if (log?.product) {
+          items = [{ id: generateId(), category: 'OLED', name: log.product, startDate: `${selectedMonth}-01`, endDate: `${selectedMonth}-28`, quantity: 0, price: 0 }];
+      } else {
+          if (selectedMonth) {
+            items = [{ id: generateId(), category: 'OLED', name: '', startDate: `${selectedMonth}-01`, endDate: `${selectedMonth}-05`, quantity: 0, price: 0 }];
+          }
+      }
       setEditingItems(items);
     }
   }, [selectedReactor, selectedMonth, localLogs]); 
@@ -274,8 +306,7 @@ const Chapter7_ReactorLayout = ({
     const util = calculateStandardUtilization(editingItems, selectedMonth);
     setCalculatedUtil(util);
     const revenue = editingItems.reduce((sum, item) => {
-        const itemRev = ((safeNum(item.quantity) * safeNum(item.price))) / 1000000000;
-        return sum + itemRev;
+        return sum + ((safeNum(item.quantity) * safeNum(item.price))) / 1000000000;
     }, 0);
     setTotalRevenue(revenue);
   }, [editingItems, selectedMonth]);
@@ -290,18 +321,9 @@ const Chapter7_ReactorLayout = ({
     setFactoryZones([...factoryZones, { id: newId, name: `New Factory ${newId + 1}` }]);
   };
 
-  const handleResetData = () => {
-     if(window.confirm("초기화 하시겠습니까? 모든 저장된 데이터가 삭제됩니다.")) {
-         localStorage.removeItem('matflow_reactors_v2');
-         localStorage.removeItem('matflow_logs_v2');
-         localStorage.removeItem('matflow_zones_v2');
-         window.location.reload();
-     }
-  };
-
   const handleExistingDragStart = (e, id) => {
     if (!isEditMode) return;
-    const reactor = localReactors.find(r => r.id === id);
+    const reactor = currentReactors.find(r => r.id === id);
     if (!reactor) return;
     setDraggingState({ type: 'EXISTING', id: id, capacity: reactor.capacity || 1000 });
     setMousePos({ x: e.clientX, y: e.clientY });
@@ -333,7 +355,7 @@ const Chapter7_ReactorLayout = ({
 
         if (rowIndex >= 0 && rowIndex < factoryZones.length) {
             if (draggingState.type === 'EXISTING') {
-              setLocalReactors(prev => prev.map(r => r.id === draggingState.id ? { ...r, x_pos: snappedX, y_pos: snappedY } : r));
+              setCurrentReactors(prev => prev.map(r => r.id === draggingState.id ? { ...r, x_pos: snappedX, y_pos: snappedY } : r));
             } else if (draggingState.type === 'NEW') {
               const newReactor = {
                 id: draggingState.id, 
@@ -343,7 +365,7 @@ const Chapter7_ReactorLayout = ({
                 x_pos: snappedX,
                 y_pos: snappedY
               };
-              setLocalReactors(prev => [...prev, newReactor]);
+              setCurrentReactors(prev => [...prev, newReactor]);
             }
         }
       }
@@ -363,66 +385,124 @@ const Chapter7_ReactorLayout = ({
   }, [draggingState]);
 
   const handleSaveChanges = () => {
-    onUpdateLayout(localReactors);
+    if (!selectedMonth) return alert("월을 선택해주세요.");
+    const updatedMap = { ...allReactorsMap, [selectedMonth]: currentReactors };
+    setAllReactorsMap(updatedMap);
+    localStorage.setItem('matflow_reactors_monthly_v2', JSON.stringify(updatedMap));
+    if (onUpdateLayout) onUpdateLayout(currentReactors);
     setIsEditMode(false);
   };
 
   const handleDirectDelete = (id) => {
     if(window.confirm("Delete this reactor immediately?")) {
-      const updatedList = localReactors.filter(r => r.id !== id);
-      setLocalReactors(updatedList);
+      const updatedList = currentReactors.filter(r => r.id !== id);
+      setCurrentReactors(updatedList);
     }
   };
 
   const handleDeleteFromModal = () => {
     if(!selectedReactor) return;
     if(window.confirm("Delete this reactor?")) {
-      const updatedList = localReactors.filter(r => r.id !== selectedReactor.id);
-      setLocalReactors(updatedList);
-      onUpdateLayout(updatedList);
+      const updatedList = currentReactors.filter(r => r.id !== selectedReactor.id);
+      setCurrentReactors(updatedList);
+      if (!isEditMode) {
+           const updatedMap = { ...allReactorsMap, [selectedMonth]: updatedList };
+           setAllReactorsMap(updatedMap);
+           localStorage.setItem('matflow_reactors_monthly_v2', JSON.stringify(updatedMap));
+           if (onUpdateLayout) onUpdateLayout(updatedList);
+      }
       setSelectedReactor(null);
     }
   };
 
-  // --- Data Entry Handlers (Modified) ---
   const handleAddItem = () => {
-    // 1. 선택된 월이 있다면 해당 월의 1일~5일로 설정
-    // selectedMonth Format: "YYYY-MM"
     let startStr = '';
     let endStr = '';
-
     if (selectedMonth) {
         startStr = `${selectedMonth}-01`;
         endStr = `${selectedMonth}-05`;
     } else {
-        // Fallback: 오늘 날짜
         const today = new Date();
         startStr = today.toISOString().split('T')[0];
         const future = new Date(today);
         future.setDate(today.getDate() + 4);
         endStr = future.toISOString().split('T')[0];
     }
-
-    setEditingItems([...editingItems, {
-      id: generateId(), 
-      category: 'OLED', 
-      name: '', 
-      startDate: startStr, 
-      endDate: endStr, 
-      quantity: 0, 
-      price: 0
-    }]);
+    setEditingItems([...editingItems, { id: generateId(), category: 'OLED', name: '', startDate: startStr, endDate: endStr, quantity: 0, price: 0 }]);
   };
   
   const handleRemoveItem = (itemId) => setEditingItems(prev => prev.filter(i => i.id !== itemId));
   const handleItemChange = (id, field, value) => setEditingItems(prev => prev.map(item => item.id === id ? { ...item, [field]: value } : item));
   
-  const handleDataSave = (e) => {
+  // 🔥 [핵심 수정] 저장 시 ID를 수동으로 계산하여 DB에 Insert (Auto Increment 미설정 대응)
+  const handleDataSave = async (e) => {
     e.preventDefault();
     if (!selectedReactor) return;
+    
+    setIsSaving(true);
     const formData = new FormData(e.target);
     const derivedStatus = formData.get('statusOverride') || (calculatedUtil > 0 ? 'Running' : 'Idle');
     
+    // 1. 커스텀 카테고리(기본 3개 외) 추출
+    const customCategories = new Set();
+    editingItems.forEach(item => {
+        const cat = item.category;
+        // BU_CATEGORIES(OLED, API, 신사업)에 없고, 비어있지 않은 카테고리만 대상
+        if (cat && !BU_CATEGORIES.some(bc => bc.id === cat)) {
+            customCategories.add(cat);
+        }
+    });
+
+    // 2. Supabase에 없으면 Insert (수동 ID 생성 로직 추가)
+    if (customCategories.size > 0) {
+        try {
+            const catArray = Array.from(customCategories);
+            
+            // (A) 이미 존재하는지 확인
+            const { data: existingRows, error: fetchError } = await supabase
+                .from('pnl_data')
+                .select('name')
+                .in('name', catArray);
+            
+            if (fetchError) throw fetchError;
+
+            const existingNames = new Set((existingRows || []).map(r => r.name));
+            const newNames = catArray.filter(c => !existingNames.has(c)); // 진짜 없는 것만 필터링
+
+            if (newNames.length > 0) {
+                // (B) [중요] ID 수동 계산: 현재 가장 큰 ID를 가져와서 +1, +2, ...
+                const { data: maxIdData } = await supabase
+                    .from('pnl_data')
+                    .select('id')
+                    .order('id', { ascending: false })
+                    .limit(1);
+
+                let nextId = (maxIdData && maxIdData.length > 0) ? maxIdData[0].id + 1 : 1;
+
+                const rowsToInsert = newNames.map(name => ({
+                    id: nextId++, // ID 수동 할당
+                    name: name,
+                    rev: 0,
+                    gm: 0,
+                    fixed: 0
+                }));
+
+                const { error: insertError } = await supabase.from('pnl_data').insert(rowsToInsert);
+                
+                if (insertError) {
+                    console.error("Auto-insert Category Error:", insertError);
+                    alert("새 카테고리 저장 중 DB 오류가 발생했습니다.\n" + insertError.message);
+                } else {
+                    console.log("New categories added:", newNames);
+                }
+            }
+        } catch (err) {
+            console.error("Failed to sync categories:", err);
+            alert("카테고리 동기화 실패: " + err.message);
+        }
+    }
+
+    // 3. 기존 저장 로직 (Local & Logs)
     const updatePayload = {
       reactor_id: selectedReactor.id,
       month: selectedMonth,
@@ -443,27 +523,23 @@ const Chapter7_ReactorLayout = ({
         return [...prev, updatePayload];
     });
 
-    onUpdateLog(updatePayload);
+    if(onUpdateLog) onUpdateLog(updatePayload);
+    setIsSaving(false);
     setSelectedReactor(null);
   };
 
   // --- Right Panel Aggregation ---
   const logsForMonth = (localLogs || []).filter(l => l.month === selectedMonth);
-  const totalReactorCount = localReactors.length;
+  const totalReactorCount = currentReactors.length;
   const totalUtilSum = logsForMonth.reduce((acc, cur) => acc + (safeNum(cur.utilization)), 0);
   const avgUtil = totalReactorCount > 0 ? (totalUtilSum / totalReactorCount).toFixed(1) : 0;
   const activeCount = logsForMonth.filter(l => l.status === 'Running').length;
 
   const allMonthlyItems = logsForMonth.flatMap(log => {
-      const reactor = localReactors.find(r => r.id === log.reactor_id);
+      const reactor = currentReactors.find(r => r.id === log.reactor_id);
       const rName = reactor ? reactor.name : 'Unknown';
       const items = Array.isArray(log.items) ? log.items : (log.product ? [{ name: log.product, startDate: '', endDate: '', quantity: 0, price: 0, category: 'OLED' }] : []);
-      return items.map(item => ({
-          ...item,
-          reactorName: rName,
-          reactorId: log.reactor_id, 
-          totalVal: ((safeNum(item.quantity) * safeNum(item.price))) / 1000000000
-      }));
+      return items.map(item => ({ ...item, reactorName: rName, reactorId: log.reactor_id, totalVal: ((safeNum(item.quantity) * safeNum(item.price))) / 1000000000 }));
   }).sort((a, b) => {
      if (b.totalVal !== a.totalVal) return b.totalVal - a.totalVal;
      return (a.startDate || '').localeCompare(b.startDate || '');
@@ -472,25 +548,17 @@ const Chapter7_ReactorLayout = ({
   const totalMonthlyRevenue = allMonthlyItems.reduce((acc, item) => acc + item.totalVal, 0);
   const totalMonthlyQty = allMonthlyItems.reduce((acc, item) => acc + safeNum(item.quantity), 0);
 
-  // Category Aggregation
   const categoryAggregates = allMonthlyItems.reduce((acc, item) => {
       const cat = item.category || 'OLED';
-      if (!acc[cat]) {
-          acc[cat] = { revenue: 0, qty: 0, count: 0 };
-      }
-      acc[cat].revenue += item.totalVal;
-      acc[cat].qty += safeNum(item.quantity);
-      acc[cat].count += 1;
+      if (!acc[cat]) { acc[cat] = { revenue: 0, qty: 0, count: 0 }; }
+      acc[cat].revenue += item.totalVal; acc[cat].qty += safeNum(item.quantity); acc[cat].count += 1;
       return acc;
   }, {});
 
-  const categorySummaryList = Object.entries(categoryAggregates)
-      .map(([cat, data]) => ({ category: cat, ...data }))
-      .sort((a, b) => b.revenue - a.revenue);
-
-  // Summary Item Click Handler
+  const categorySummaryList = Object.entries(categoryAggregates).map(([cat, data]) => ({ category: cat, ...data })).sort((a, b) => b.revenue - a.revenue);
+  
   const handleSummaryItemClick = (reactorId) => {
-    const reactor = localReactors.find(r => r.id === reactorId);
+    const reactor = currentReactors.find(r => r.id === reactorId);
     if (reactor) setSelectedReactor(reactor);
   };
 
@@ -502,8 +570,8 @@ const Chapter7_ReactorLayout = ({
         <div className="flex items-center gap-4 w-full lg:w-auto">
            <div className="p-2 bg-indigo-50 rounded-lg text-indigo-600"><Factory size={24}/></div>
            <div>
-              <h2 className="text-lg font-bold text-slate-800">Production Planning</h2>
-              <p className="text-xs text-slate-500">Global Standard Utilization • Revenue Tracking</p>
+              <h2 className="text-lg font-bold text-slate-800">Production Planning ({selectedMonth})</h2>
+              <p className="text-xs text-slate-500">Monthly Reactor Layout • Standard Utilization</p>
            </div>
            <div className="h-8 w-px bg-slate-200 mx-2 hidden md:block"></div>
            <div className="hidden md:flex gap-4 text-sm">
@@ -513,38 +581,9 @@ const Chapter7_ReactorLayout = ({
         </div>
 
         <div className="flex items-center gap-3 w-full lg:w-auto justify-end">
-           <button onClick={handleResetData} title="Reset All Data" className="p-2 text-slate-400 hover:text-rose-500 transition"><RotateCcw size={16}/></button>
-           
-           <div className="relative flex items-center gap-2">
-             <div className="relative">
-                <select 
-                    value={selectedMonth} 
-                    onChange={(e) => onMonthChange(e.target.value)}
-                    className="appearance-none bg-slate-50 border border-slate-200 rounded-lg pl-3 pr-8 py-2 text-sm font-bold outline-none cursor-pointer hover:bg-slate-100 min-w-[120px] text-slate-700"
-                >
-                    {availableMonths.map(m => (
-                        <option key={m} value={m}>{m}</option>
-                    ))}
-                </select>
-                <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"/>
-             </div>
-             
-             <div className="relative group">
-                <input 
-                    type="month" 
-                    onChange={(e) => onMonthChange(e.target.value)} 
-                    className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-                    title="Select New Month"
-                />
-                <button className="p-2 text-slate-400 hover:text-indigo-600 bg-slate-50 border border-slate-200 rounded-lg transition-colors shadow-sm">
-                    <Calendar size={16}/>
-                </button>
-             </div>
-           </div>
-
            {isEditMode ? (
              <button onClick={handleSaveChanges} className="bg-indigo-600 text-white px-4 py-2 rounded-lg font-bold text-sm flex items-center gap-2 hover:bg-indigo-700 shadow-sm">
-               <Save size={16}/> Save Layout
+               <Save size={16}/> Save {selectedMonth} Layout
              </button>
            ) : (
              <button onClick={() => setIsEditMode(true)} className="bg-white text-slate-600 border border-slate-200 px-4 py-2 rounded-lg font-bold text-sm flex items-center gap-2 hover:bg-slate-50">
@@ -554,12 +593,11 @@ const Chapter7_ReactorLayout = ({
         </div>
       </div>
 
-      {/* 2. Main Content Area (Split View) */}
+      {/* 2. Main Content Area */}
       <div className="flex-1 flex flex-col lg:flex-row gap-4 overflow-hidden relative">
          
          {/* LEFT: Canvas */}
          <div className="flex-1 relative border border-slate-300 rounded-xl overflow-auto bg-slate-100 shadow-inner flex flex-col">
-             
              {isEditMode && (
                 <div className="sticky top-4 left-4 right-4 mx-4 mt-4 bg-slate-800 text-white p-3 rounded-xl shadow-lg flex items-center gap-4 overflow-x-auto z-40">
                    <span className="text-xs font-bold text-slate-400 uppercase shrink-0 px-2 flex items-center gap-1"><MousePointer2 size={12}/> Drag:</span>
@@ -594,11 +632,10 @@ const Chapter7_ReactorLayout = ({
                   </div>
                 ))}
                 
-                {localReactors.map((reactor) => {
+                {currentReactors.map((reactor) => {
                   const log = logsForMonth.find(l => l.reactor_id === reactor.id);
                   const isBeingDragged = draggingState?.type === 'EXISTING' && draggingState.id === reactor.id;
                   if (isBeingDragged) return null;
-
                   return (
                     <ReactorNode 
                         key={reactor.id} 
@@ -700,12 +737,7 @@ const Chapter7_ReactorLayout = ({
 
       {/* Global Drag Ghost */}
       {draggingState && (
-         <div 
-           className="fixed pointer-events-none z-[9999]"
-           style={{ 
-             left: mousePos.x, top: mousePos.y, transform: 'translate(-50%, -50%)'
-           }}
-         >
+         <div className="fixed pointer-events-none z-[9999]" style={{ left: mousePos.x, top: mousePos.y, transform: 'translate(-50%, -50%)' }}>
             <div className={`rounded-full border-4 border-dashed border-indigo-500 bg-indigo-100/90 flex items-center justify-center shadow-2xl backdrop-blur-sm`}
                  style={{ width: CAPACITY_STYLES[draggingState.capacity]?.size || 80, height: CAPACITY_STYLES[draggingState.capacity]?.size || 80 }}>
                <span className="text-xs font-bold text-indigo-600">{draggingState.capacity}L</span>
@@ -715,10 +747,7 @@ const Chapter7_ReactorLayout = ({
 
       {/* Modal */}
       {selectedReactor && (
-        <div 
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-md p-4 animate-fade-in" 
-            onClick={() => setSelectedReactor(null)}
-        >
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-md p-4 animate-fade-in" onClick={() => setSelectedReactor(null)}>
            <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]" onClick={e => e.stopPropagation()}>
               <div className="bg-slate-900 px-6 py-5 flex justify-between items-center shrink-0">
                  <div>
@@ -762,14 +791,11 @@ const Chapter7_ReactorLayout = ({
                             {editingItems.map((item, idx) => {
                                 const isCustomCategory = !BU_CATEGORIES.some(c => c.id === item.category);
                                 const badgeColor = getCategoryColor(item.category);
-
                                 return (
                                 <div key={item.id} className="bg-white border border-slate-200 rounded-xl p-3 shadow-sm flex flex-col gap-3 group relative">
                                     <div className="flex gap-3 items-start">
                                         <div className="bg-slate-100 text-slate-500 text-[10px] font-bold px-1.5 py-0.5 rounded mt-2">{idx + 1}</div>
                                         <div className="flex-1 grid grid-cols-1 md:grid-cols-2 gap-3">
-                                            
-                                            {/* Category Selection */}
                                             <div className="col-span-1 md:col-span-2 flex gap-2">
                                                 <div className="relative w-36 shrink-0">
                                                     <select 
@@ -785,8 +811,6 @@ const Chapter7_ReactorLayout = ({
                                                     </select>
                                                     <div className="absolute right-2 top-1.5 pointer-events-none opacity-50"><Tag size={10}/></div>
                                                 </div>
-                                                
-                                                {/* Custom Category Input */}
                                                 {isCustomCategory && (
                                                     <input 
                                                         type="text" 
@@ -797,55 +821,30 @@ const Chapter7_ReactorLayout = ({
                                                         autoFocus
                                                     />
                                                 )}
-
-                                                {/* Product Name */}
                                                 {!isCustomCategory && (
                                                     <input 
-                                                        type="text" 
-                                                        placeholder="Product Name" 
-                                                        value={item.name} 
+                                                        type="text" placeholder="Product Name" value={item.name} 
                                                         onChange={(e) => handleItemChange(item.id, 'name', e.target.value)} 
                                                         className="flex-1 bg-slate-50 border-b border-slate-200 px-2 py-1 text-sm font-bold focus:bg-white focus:border-indigo-500 outline-none transition-colors"
                                                     />
                                                 )}
                                             </div>
-                                            
-                                            {/* Name Input for Custom Category */}
                                             {isCustomCategory && (
                                                 <div className="col-span-1 md:col-span-2">
-                                                    <input 
-                                                        type="text" 
-                                                        placeholder="Product Name" 
-                                                        value={item.name} 
-                                                        onChange={(e) => handleItemChange(item.id, 'name', e.target.value)} 
-                                                        className="w-full bg-slate-50 border-b border-slate-200 px-2 py-1 text-sm font-bold focus:bg-white focus:border-indigo-500 outline-none transition-colors"
-                                                    />
+                                                    <input type="text" placeholder="Product Name" value={item.name} onChange={(e) => handleItemChange(item.id, 'name', e.target.value)} className="w-full bg-slate-50 border-b border-slate-200 px-2 py-1 text-sm font-bold focus:bg-white focus:border-indigo-500 outline-none transition-colors"/>
                                                 </div>
                                             )}
-
-                                            {/* [Modified] Date Inputs */}
                                             <div className="flex items-center gap-2">
                                                 <div className="flex-1 relative">
                                                     <span className="text-[9px] text-slate-400 absolute -top-1.5 left-0">Start</span>
-                                                    <input 
-                                                        type="date" 
-                                                        value={item.startDate} 
-                                                        onChange={(e) => handleItemChange(item.id, 'startDate', e.target.value)} 
-                                                        className="w-full text-xs bg-transparent border-b border-slate-200 py-1 outline-none font-medium text-slate-700 focus:border-indigo-500"
-                                                    />
+                                                    <input type="date" value={item.startDate} onChange={(e) => handleItemChange(item.id, 'startDate', e.target.value)} className="w-full text-xs bg-transparent border-b border-slate-200 py-1 outline-none font-medium text-slate-700 focus:border-indigo-500"/>
                                                 </div>
                                                 <span className="text-slate-300 mt-2">~</span>
                                                 <div className="flex-1 relative">
                                                     <span className="text-[9px] text-slate-400 absolute -top-1.5 left-0">End</span>
-                                                    <input 
-                                                        type="date" 
-                                                        value={item.endDate} 
-                                                        onChange={(e) => handleItemChange(item.id, 'endDate', e.target.value)} 
-                                                        className="w-full text-xs bg-transparent border-b border-slate-200 py-1 outline-none font-medium text-slate-700 focus:border-indigo-500"
-                                                    />
+                                                    <input type="date" value={item.endDate} onChange={(e) => handleItemChange(item.id, 'endDate', e.target.value)} className="w-full text-xs bg-transparent border-b border-slate-200 py-1 outline-none font-medium text-slate-700 focus:border-indigo-500"/>
                                                 </div>
                                             </div>
-
                                             <div className="flex gap-2">
                                                 <div className="flex-1 flex items-center border border-slate-200 rounded px-2 bg-slate-50">
                                                     <span className="text-[10px] text-slate-400 mr-1">Qty</span>
@@ -856,8 +855,6 @@ const Chapter7_ReactorLayout = ({
                                                     <input type="number" value={item.price} onChange={(e) => handleItemChange(item.id, 'price', parseFloat(e.target.value))} className="w-full bg-transparent text-xs font-bold outline-none text-right py-1"/>
                                                 </div>
                                             </div>
-                                            
-                                            {/* Revenue Calc */}
                                             <div className="col-span-1 md:col-span-2 flex justify-end items-center gap-1 text-[10px] text-slate-400 border-t border-slate-100 pt-1 mt-1">
                                                 <span>Est. Revenue:</span>
                                                 <span className="font-bold text-emerald-600">{(((safeNum(item.quantity) * safeNum(item.price))) / 1000000000).toLocaleString()} B</span>
@@ -873,7 +870,9 @@ const Chapter7_ReactorLayout = ({
                  </div>
                  <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-between gap-3 shrink-0">
                     <button type="button" onClick={handleDeleteFromModal} className="px-4 py-2 rounded-lg border border-rose-200 text-rose-500 hover:bg-rose-50 transition text-sm font-bold flex items-center gap-2"><Trash2 size={16}/> Delete</button>
-                    <button type="submit" className="flex-1 bg-slate-900 text-white font-bold py-3 rounded-lg hover:bg-slate-800 transition shadow-lg flex justify-center items-center gap-2"><CheckCircle2 size={16}/> Save</button>
+                    <button type="submit" disabled={isSaving} className="flex-1 bg-slate-900 text-white font-bold py-3 rounded-lg hover:bg-slate-800 transition shadow-lg flex justify-center items-center gap-2">
+                        {isSaving ? <Activity className="animate-spin" size={16}/> : <CheckCircle2 size={16}/>} Save
+                    </button>
                  </div>
               </form>
            </div>

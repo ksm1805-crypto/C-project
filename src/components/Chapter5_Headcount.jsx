@@ -16,11 +16,25 @@ const safeNum = (v) => {
   return Number.isFinite(n) ? n : 0;
 };
 
+// [추가] LocalStorage 데이터 파싱 헬퍼 (Chapter 3와 동일 로직)
+const safeParse = (key, defaultValue = []) => {
+  try {
+    const item = localStorage.getItem(key);
+    if (!item) return defaultValue;
+    const parsed = JSON.parse(item);
+    return Array.isArray(parsed) ? parsed : defaultValue;
+  } catch (e) {
+    console.error(`JSON Parsing Error [${key}]:`, e);
+    return defaultValue;
+  }
+};
+
 const Chapter5_Headcount = ({
   pnlData, headcountDB, onHeadcountUpdate, prodStats, historyData,
   selectedMonth, onMonthChange
 }) => {
   const [selectedDept, setSelectedDept] = useState(null);
+  const [linkedData, setLinkedData] = useState({}); // [추가] 실시간 연동 데이터 상태
 
   // 선택된 월이 바뀌면 상세 보기 닫기
   useEffect(() => {
@@ -39,18 +53,57 @@ const Chapter5_Headcount = ({
     setVisibleMetrics(prev => ({ ...prev, [key]: !prev[key] }));
   };
 
-  // --- [Logic 1] 조회 가능한 월 (History Archive 기준) ---
-  const availableMonths = useMemo(() => {
-    if (!Array.isArray(historyData)) return [];
-    return Array.from(new Set(historyData.map(h => h.month))).sort((a, b) => b.localeCompare(a));
-  }, [historyData]);
-
-  // 초기 로딩 시 가장 최신 월 선택 (App에서 제어하지만 방어적으로)
+  // --- [Logic 0] 실시간 로그 데이터 로드 (Chapter 3 로직 복사) ---
   useEffect(() => {
-    if (availableMonths.length > 0 && !selectedMonth) {
-      onMonthChange(availableMonths[0]);
-    }
-  }, [availableMonths, selectedMonth, onMonthChange]);
+    const loadLinkedData = () => {
+      try {
+        const logs = safeParse('matflow_logs_v2');
+        const reactors = safeParse('matflow_reactors_v2');
+        const totalReactorCount = Array.isArray(reactors) ? reactors.length : 0;
+        const monthlyMap = {};
+
+        logs.forEach(log => {
+          if (log?.month && !monthlyMap[log.month]) {
+            monthlyMap[log.month] = { utilSum: 0, oled: 0, api: 0, new_biz: 0 };
+          }
+        });
+
+        logs.forEach(log => {
+          const m = log?.month;
+          if (!m || !monthlyMap[m]) return;
+
+          // Batch Count 집계 (1 Item = 1 Batch)
+          if (log.items && Array.isArray(log.items)) {
+            log.items.forEach(item => {
+              const cat = String(item.category || 'OLED').toUpperCase();
+              if (cat === 'OLED') monthlyMap[m].oled += 1;
+              else if (cat === 'API') monthlyMap[m].api += 1;
+              else monthlyMap[m].new_biz += 1;
+            });
+          }
+        });
+
+        const formattedData = {};
+        Object.keys(monthlyMap).forEach(key => {
+          const d = monthlyMap[key];
+          formattedData[key] = {
+            oled: d.oled,
+            api: d.api,
+            new_biz: d.new_biz,
+            hasData: true
+          };
+        });
+
+        setLinkedData(formattedData);
+      } catch (e) {
+        console.error("Failed to load linked data", e);
+      }
+    };
+
+    loadLinkedData();
+    window.addEventListener('storage', loadLinkedData);
+    return () => window.removeEventListener('storage', loadLinkedData);
+  }, []);
 
   // --- [Data Prep] ---
   const currentDepts = useMemo(() => {
@@ -70,15 +123,21 @@ const Chapter5_Headcount = ({
     const archive = Array.isArray(historyData) ? historyData.find(h => h.month === selectedMonth) : null;
     const totalRevenue = archive ? safeNum(archive.rev) : 0;
     
-    // 3. 생산 데이터 (ProdStats)
-    const currentStat = Array.isArray(prodStats) ? prodStats.find(s => s.month === selectedMonth) : null;
-    const currentTotalBatch = currentStat ? (safeNum(currentStat.oled) + safeNum(currentStat.api) + safeNum(currentStat.new_biz || currentStat.newBiz)) : 0;
+    // 3. [수정] 생산 데이터 우선순위: Linked Data > ProdStats(DB)
+    const linked = linkedData[selectedMonth];
+    const stat = Array.isArray(prodStats) ? prodStats.find(s => s.month === selectedMonth) : null;
     
-    // 4. 지표 계산 (Revenue는 B 단위 유지)
-    // 인당 매출: (Total Rev B) / (Headcount)
+    let currentTotalBatch = 0;
+    if (linked?.hasData) {
+       // Chapter 7 연동 데이터가 있으면 우선 사용
+       currentTotalBatch = safeNum(linked.oled) + safeNum(linked.api) + safeNum(linked.new_biz);
+    } else if (stat) {
+       // 없으면 DB 데이터 사용
+       currentTotalBatch = safeNum(stat.oled) + safeNum(stat.api) + safeNum(stat.new_biz || stat.newBiz);
+    }
+    
+    // 4. 지표 계산
     const revPerHead = totalHeadcount > 0 ? (totalRevenue / totalHeadcount) : 0;
-    
-    // 인당 생산량: (Total Batch) / (Mfg Headcount)
     const batchPerHead = mfgHeadcount > 0 ? (currentTotalBatch / mfgHeadcount) : 0;
 
     return { 
@@ -88,35 +147,37 @@ const Chapter5_Headcount = ({
       mfgHeadcount, 
       batchPerHead, 
       currentTotalBatch, 
-      isArchived: !!archive 
+      isArchived: !!archive,
+      isLinked: linked?.hasData // UI 표시용
     };
-  }, [currentDepts, prodStats, selectedMonth, historyData]);
+  }, [currentDepts, prodStats, selectedMonth, historyData, linkedData]);
 
-  // --- [Logic 3] 트렌드 차트 데이터 (History Data 기준 통합) ---
+  // --- [Logic 3] 트렌드 차트 데이터 (History + Linked Data 통합) ---
   const trendData = useMemo(() => {
     if (!Array.isArray(historyData)) return [];
     
     return historyData.map(hist => {
       const m = hist.month;
       
-      // 1. 재무 데이터 (Archive - B 단위)
       const rev = safeNum(hist.rev);
       const op = safeNum(hist.totalOp) || (safeNum(hist.gm) - safeNum(hist.fixed));
 
-      // 2. 생산 데이터 (ProdStats)
+      // [수정] 생산 데이터 우선순위 적용
+      const linked = linkedData[m];
       const stat = Array.isArray(prodStats) ? prodStats.find(p => p.month === m) : null;
-      const totalBatch = stat ? (safeNum(stat.oled) + safeNum(stat.api) + safeNum(stat.new_biz || stat.newBiz)) : 0;
+      
+      let totalBatch = 0;
+      if (linked?.hasData) {
+          totalBatch = safeNum(linked.oled) + safeNum(linked.api) + safeNum(linked.new_biz);
+      } else if (stat) {
+          totalBatch = safeNum(stat.oled) + safeNum(stat.api) + safeNum(stat.new_biz || stat.newBiz);
+      }
 
-      // 3. 인력 데이터 (HeadcountDB)
       const monthDepts = headcountDB ? headcountDB[m] : [];
       const mfgCount = Array.isArray(monthDepts) ? (monthDepts.find(d => d.id === 'mfg' || d.name.includes('제조'))?.count || 0) : 0;
       const totalHeadcount = Array.isArray(monthDepts) ? monthDepts.reduce((acc, cur) => acc + (parseInt(cur.count) || 0), 0) : 0;
       
-      // 4. 지표 계산
       const productivity = mfgCount > 0 ? (totalBatch / mfgCount) : 0;
-      
-      // 인당 매출 및 영업이익 계산 (단위: B KRW/명)
-      // 값이 너무 작게 나오면 (예: 0.05 B), 사용자에게는 0.05로 보여주되 단위가 B임을 인지시켜야 함.
       const revPerHead = totalHeadcount > 0 ? (rev / totalHeadcount) : 0;
       const opPerHead = totalHeadcount > 0 ? (op / totalHeadcount) : 0;
 
@@ -127,8 +188,8 @@ const Chapter5_Headcount = ({
         batch: totalBatch,
         productivity
       };
-    }).sort((a, b) => a.month.localeCompare(b.month)).slice(-12); // 최근 12개월만
-  }, [historyData, prodStats, headcountDB]);
+    }).sort((a, b) => a.month.localeCompare(b.month)).slice(-12);
+  }, [historyData, prodStats, headcountDB, linkedData]);
 
   // --- [Handlers] ---
   const handleDeptFieldChange = (id, field, value) => {
@@ -276,7 +337,7 @@ const Chapter5_Headcount = ({
   // --- [View 2: Overview] ---
   return (
     <div className="space-y-6 animate-fade-in pb-20 lg:pb-10">
-      {/* 1. Header & Select Month */}
+      {/* 1. Header (조회 월 선택 Dropdown 삭제) */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-3">
          <div>
             <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
@@ -285,20 +346,6 @@ const Chapter5_Headcount = ({
             <p className="text-sm text-slate-500 mt-1">
               History Archive에 저장된 데이터를 기반으로 분석합니다.
             </p>
-         </div>
-         <div className="flex items-center gap-2 bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-sm self-end sm:self-auto">
-            <Calendar size={16} className="text-slate-400"/>
-            <span className="text-xs text-slate-500 font-bold">조회 기준(Archive):</span>
-            <select 
-              className="text-sm font-bold text-indigo-600 bg-transparent outline-none cursor-pointer flex-1"
-              value={selectedMonth} 
-              onChange={(e) => onMonthChange(e.target.value)}
-            >
-              {availableMonths.length === 0 && <option value="">저장된 데이터 없음</option>}
-              {availableMonths.map(month => (
-                <option key={month} value={month}>{month}</option>
-              ))}
-            </select>
          </div>
       </div>
 
@@ -333,7 +380,9 @@ const Chapter5_Headcount = ({
               </span>
               <span className="text-sm font-bold text-slate-400">Batch</span>
             </div>
-            <p className="text-[10px] text-slate-400 mt-1">* Chapter 2 데이터 자동 연동</p>
+            <p className="text-[10px] text-slate-400 mt-1 flex items-center gap-1">
+               {summary.isLinked ? <><LinkIcon size={10} className="text-emerald-500"/> Ch7 Linked Data</> : <>DB Data (ProdStats)</>}
+            </p>
           </div>
         </div>
 

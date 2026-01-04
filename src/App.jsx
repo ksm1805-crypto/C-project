@@ -34,7 +34,7 @@ const safeNum = (v) => {
   return Number.isFinite(n) ? n : 0;
 };
 
-// [Security] 관리자 비밀번호 설정 (원하는 비밀번호로 변경하세요)
+// [Security] 관리자 비밀번호 설정
 const ADMIN_PASSWORD = "1234";
 
 const App = () => {
@@ -209,24 +209,19 @@ const App = () => {
     if (val && /^\d{4}-\d{2}$/.test(val)) handleMonthChange(val);
   }, [workMonth, handleMonthChange]);
 
-  // [Changed] Delete Month Feature (Password Protected)
   const handleDeleteMonth = useCallback(async () => {
-    // 1. 비밀번호 확인
     const input = window.prompt("데이터를 영구 삭제하려면 관리자 비밀번호를 입력하세요:");
-    if (input === null) return; // 취소 누름
+    if (input === null) return;
     if (input !== ADMIN_PASSWORD) {
       alert("비밀번호가 올바르지 않습니다.");
       return;
     }
 
-    // 2. 재확인
     if (!window.confirm(`[최종 경고] ${workMonth}월의 모든 데이터를 정말로 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.`)) return;
 
     setIsDeleting(true);
     try {
       const targetMonth = workMonth;
-
-      // Supabase Delete
       await Promise.all([
         supabase.from('reactor_logs').delete().eq('month', targetMonth),
         supabase.from('prod_stats').delete().eq('month', targetMonth),
@@ -234,7 +229,6 @@ const App = () => {
         supabase.from('history_archive').delete().eq('month', targetMonth),
       ]);
 
-      // Local State Update
       setReactorLogs(prev => prev.filter(l => l.month !== targetMonth));
       setProdStats(prev => prev.filter(p => p.month !== targetMonth));
       setHistoryData(prev => prev.filter(h => h.month !== targetMonth));
@@ -243,8 +237,6 @@ const App = () => {
         delete next[targetMonth];
         return next;
       });
-
-      // P&L View Reset (해당 월 로그가 지워졌으므로 매출 초기화)
       setPnlData(prev => prev.map(row => ({ ...row, rev: 0 })));
 
       setNotifications(prev => [{ id: Date.now(), type: 'success', msg: `${targetMonth} Data Deleted.` }, ...prev]);
@@ -259,9 +251,11 @@ const App = () => {
   }, [workMonth]);
 
 
-  const handleReactorLogUpdate = useCallback((logEntry) => {
+  // [수정됨] 로그 업데이트 시 Supabase에 즉시 저장
+  const handleReactorLogUpdate = useCallback(async (logEntry) => {
     if (!logEntry) return;
 
+    // 1. Local State Optimistic Update (화면 즉시 갱신)
     let nextLogs = [];
     setReactorLogs(prev => {
       const filtered = prev.filter(l => !(l.reactor_id === logEntry.reactor_id && l.month === logEntry.month));
@@ -271,12 +265,52 @@ const App = () => {
 
     if (String(logEntry.month).slice(0, 7) === workMonth) {
       setPnlData(prev => calculatePnlFromLogs(prev, nextLogs, workMonth));
-      setNotifications(prev => [{ id: Date.now(), type: 'info', msg: 'P&L Synced with Factory Log' }, ...prev]);
+    }
+
+    // 2. 🔥 Supabase DB Upsert 🔥 (여기가 추가됨)
+    try {
+        const { error } = await supabase
+            .from('reactor_logs')
+            .upsert(logEntry, { onConflict: 'reactor_id, month' });
+        
+        if (error) {
+            console.error('Supabase Save Error:', error);
+            setNotifications(prev => [{ id: Date.now(), type: 'error', msg: 'DB Save Failed!' }, ...prev]);
+        } else {
+            setNotifications(prev => [{ id: Date.now(), type: 'success', msg: 'Saved to DB' }, ...prev]);
+        }
+    } catch (err) {
+        console.error("System Error during save:", err);
     }
   }, [workMonth, calculatePnlFromLogs]);
 
-  const handleLayoutUpdate = useCallback((newLayout) => {
+
+  // [수정됨] 레이아웃 업데이트 시 Supabase에 즉시 저장 (UUID 처리 수정)
+  const handleLayoutUpdate = useCallback(async (newLayout) => {
     setReactorConfig(newLayout);
+    
+    // 2. 🔥 Supabase DB Upsert 🔥
+    try {
+        // [수정] DB ID가 UUID이므로, 프론트엔드에서 생성된 id(UUID)를 그대로 전송해야 합니다.
+        // 기존 코드(typeof id === 'number' ?)는 SERIAL 타입일 때만 유효했으므로 삭제하고 직관적으로 매핑합니다.
+        const cleanConf = newLayout.map(({ id, name, type, capacity, x_pos, y_pos }) => ({
+           id, // UUID 그대로 전송
+           name, type, capacity, x_pos, y_pos
+        }));
+
+        const { error } = await supabase.from('reactor_config').upsert(cleanConf);
+        
+        if (error) throw error;
+        
+        // 저장이 완료되면 DB에서 최신 데이터를 다시 불러와 State 동기화
+        const { data: refreshed } = await supabase.from('reactor_config').select('*').order('id');
+        if (refreshed) setReactorConfig(refreshed);
+
+        setNotifications(prev => [{ id: Date.now(), type: 'success', msg: 'Layout Saved' }, ...prev]);
+    } catch (e) {
+        console.error("Layout Save Error:", e);
+        setNotifications(prev => [{ id: Date.now(), type: 'error', msg: 'Layout Save Failed' }, ...prev]);
+    }
   }, []);
 
   const handlePnlChange = useCallback((id, field, value) => {
@@ -323,12 +357,16 @@ const App = () => {
       results.push({ name: 'P&L', promise: pnlPromise });
 
       if (reactorLogs.length) results.push({ name: 'ReactorLogs', promise: supabase.from('reactor_logs').upsert(reactorLogs, { onConflict: 'reactor_id, month' }) });
+      
       if (reactorConfig.length) {
+        // [수정] UUID 처리 반영
         const cleanConf = reactorConfig.map(({ id, name, type, capacity, x_pos, y_pos }) => ({
-           id: typeof id === 'number' ? id : undefined, name, type, capacity, x_pos, y_pos
+           id, // UUID 그대로 전송
+           name, type, capacity, x_pos, y_pos
         }));
         results.push({ name: 'ReactorConfig', promise: supabase.from('reactor_config').upsert(cleanConf) });
       }
+
       if (prodStats.length) results.push({ name: 'ProdStats', promise: supabase.from('prod_stats').upsert(prodStats) });
       if (crActions.length) results.push({ name: 'CrActions', promise: supabase.from('cr_actions').upsert(crActions) });
       
@@ -356,7 +394,7 @@ const App = () => {
     }
   }, [isSaving, pnlData, reactorLogs, reactorConfig, prodStats, crActions, headcountDB]);
 
-  // Search Logic (Debounced)
+  // Search Logic
   useEffect(() => {
     const timer = setTimeout(() => {
       const q = searchQuery.toLowerCase().trim();
@@ -371,7 +409,6 @@ const App = () => {
     return () => clearTimeout(timer);
   }, [searchQuery, pnlData, crActions, reactorConfig]);
 
-  // Keydown
   useEffect(() => {
     const k = (e) => { if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); handleGlobalSave(); } };
     window.addEventListener('keydown', k);
@@ -398,7 +435,8 @@ const App = () => {
       case 'chapter0': return <MemoChapter0 {...commonProps} reactorLogs={reactorLogs} reactorConfig={reactorConfig} onPnlChange={handlePnlChange} onSaveArchive={handleSaveToArchive} onDeleteArchive={handleArchiveDelete}/>;
       case 'chapter1': return <MemoChapter1 {...commonProps} />;
       case 'chapter2': return <MemoChapter2 {...commonProps} />;
-      case 'chapter3': return <MemoChapter3 {...commonProps} onUpdateStats={handleProdStatsUpdate} />;
+      case 'chapter3': return <MemoChapter3 {...commonProps} onUpdateStats={handleProdStatsUpdate} reactorLogs={reactorLogs} 
+          reactorConfig={reactorConfig} />;
       case 'chapter4': return <MemoChapter4 actions={crActions} onUpdateActions={handleCrActionsUpdate} />;
       case 'chapter5': return <MemoChapter5 {...commonProps} onHeadcountUpdate={handleHeadcountChange} />;
       case 'chapter6': return <MemoChapter6 {...commonProps} crActions={crActions} depts={headcountDB[workMonth] || []} />;
@@ -447,20 +485,13 @@ const App = () => {
             </div>
             <div className="flex items-center gap-3">
                
-               {/* Month Controls with Delete Feature */}
+               {/* Month Controls */}
                <div className="hidden md:flex items-center gap-2">
                  <select value={workMonth} onChange={(e)=>handleMonthChange(e.target.value)} className="bg-slate-50 border rounded px-2 py-1 text-sm font-bold">
                     {availableMonths.map(m=><option key={m} value={m}>{m}</option>)}
                  </select>
                  <button onClick={handleCreateMonth} className="p-1 border rounded hover:bg-slate-50" title="Create New Month"><Plus size={16}/></button>
-                 
-                 {/* Delete Month Button */}
-                 <button 
-                   onClick={handleDeleteMonth} 
-                   disabled={isDeleting}
-                   className="p-1 border rounded hover:bg-red-50 text-slate-400 hover:text-red-500 transition-colors ml-1" 
-                   title="Delete Selected Month Data"
-                 >
+                 <button onClick={handleDeleteMonth} disabled={isDeleting} className="p-1 border rounded hover:bg-red-50 text-slate-400 hover:text-red-500 transition-colors ml-1" title="Delete Selected Month Data">
                    {isDeleting ? <Loader2 size={16} className="animate-spin text-red-500"/> : <Trash2 size={16}/>}
                  </button>
                </div>
